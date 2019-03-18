@@ -19,8 +19,8 @@ import L3Discovery
 import PGT.Common
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
-# last changed : 2019.02.07
-scriptVersion = "5.0.8"
+# last changed : 2019.03.18
+scriptVersion = "5.0.9"
 class JunOS(L3Discovery.IRouter):
   # Beyond _maxRouteTableEntries only the default route will be queried
   _maxRouteTableEntries = 30000    
@@ -31,6 +31,8 @@ class JunOS(L3Discovery.IRouter):
     self._inventory = None
     # HostName
     self._hostName = None
+    # The DeviceType object determined by GetDeviceType internally
+    self._deviceType = DeviceType.Unknown
     # Number of member in a VC
     self._stackCount = 0
     # The list of logical systems defined
@@ -84,13 +86,29 @@ class JunOS(L3Discovery.IRouter):
   def GetModelNumber(self):
     """Returns Model number as a string, calculated from Inventory"""
     if not self._ModelNumber :
+      if self._deviceType == DeviceType.Unknown :
+        self.GetDeviceType()      
+      inv = self.GetInventory()        
       mn  = ""
-      inv = self.GetInventory()
-      FPCs = re.findall(r"FPC \d.*", inv)
-      for thisFPC in FPCs :
-        words = filter(None, thisFPC.split(" "))
-        mn += (";" + words[6])
-      self._ModelNumber = mn.strip(";") 
+      if self._deviceType == DeviceType.Firewall :
+        allChassis = re.findall(r"Chassis\s.*", inv)
+        for thisChassis in allChassis :
+          words = filter(None, thisChassis.split(" "))
+          mn += (";" + words[2])
+        self._ModelNumber = mn.strip(";")        
+      elif self._deviceType == DeviceType.Router :
+        allChassis = re.findall(r"Chassis\s.*", inv)
+        for thisChassis in allChassis :
+          words = filter(None, thisChassis.split(" "))
+          mn += (";" + words[2])
+        self._ModelNumber = mn.strip(";") 
+      elif self._deviceType == DeviceType.Switch :
+        FPCs = re.findall(r"FPC \d.*", inv)
+        for thisFPC in FPCs :
+          words = filter(None, thisFPC.split(" "))
+          mn += (";" + words[6])
+        self._ModelNumber = mn.strip(";") 
+         
     return self._ModelNumber
     
   def GetOperationStatusLabel(self):
@@ -122,26 +140,54 @@ class JunOS(L3Discovery.IRouter):
   def GetSystemSerial(self):
     """Returns System serial numbers as a string, calculated from Inventory"""
     if not self._SystemSerial :
-      ss = ""
+      if self._deviceType == DeviceType.Unknown :
+        self.GetDeviceType()
       inv = self.GetInventory()
-      FPCs = re.findall(r"FPC \d.*", inv)
-      for thisFPC in FPCs :
-        words = filter(None, thisFPC.split(" "))
-        ss += (";" + words[5])
-      self._SystemSerial = ss.strip(";")
+      ss = ""
+      if self._deviceType == DeviceType.Firewall :
+        allChassis = re.findall(r"Chassis\s.*", inv)
+        for thisChassis in allChassis :
+          words = filter(None, thisChassis.split(" "))
+          ss += (";" + words[1])
+        self._SystemSerial = ss.strip(";")        
+      elif self._deviceType == DeviceType.Router :
+        allChassis = re.findall(r"Chassis\s.*", inv)
+        for thisChassis in allChassis :
+          words = filter(None, thisChassis.split(" "))
+          ss += (";" + words[1])
+        self._SystemSerial = ss.strip(";") 
+      elif self._deviceType == DeviceType.Switch :
+        FPCs = re.findall(r"FPC \d.*", inv)
+        for thisFPC in FPCs :
+          words = filter(None, thisFPC.split(" "))
+          ss += (";" + words[5])
+        self._SystemSerial = ss.strip(";")
     return self._SystemSerial
     
   def GetDeviceType(self):
     """Returns Type string that can be Switch, Router or Firewall, depending on Model"""
-    v = self.GetVersion()
-    modelLine = next((line for line in v.splitlines() if "Model:" in line), None)
-    if modelLine :
-       model = modelLine.split(":")[1].strip()
-       if model.startswith("ex") or model.startswith("qfx"): return "Switch"
-       elif model.startswith("srx") : return "Firewall"
-       elif model.startswith("mx") : return "Router"
-       else: return "Unknown"
-    else : return "Unknown"
+    if self._deviceType == DeviceType.Unknown:
+      v = self.GetVersion()
+      modelLine = next((line for line in v.splitlines() if "Model:" in line), None)
+      if modelLine :
+         model = modelLine.split(":")[1].strip()
+         if model.startswith("ex") or model.startswith("qfx"): 
+           self._deviceType = DeviceType.Switch
+         elif model.startswith("srx") : 
+           self._deviceType = DeviceType.Firewall
+         elif model.startswith("mx") : 
+           self._deviceType = DeviceType.Router
+         else:
+           self._deviceType = DeviceType.Unknown
+    
+    if self._deviceType == DeviceType.Firewall :
+      return "Firewall"     
+    elif self._deviceType == DeviceType.Router :
+      return "Router" 
+    elif self._deviceType == DeviceType.Switch :
+      return "Switch" 
+    else : 
+      return "Unknown"    
     
   def GetVendor(self):
     """Must return a string matching the Vendor name this parser is responible for"""
@@ -1004,6 +1050,14 @@ class InterfaceParser():
     self.Interfaces = {}
     self.AllInterfaceConfiguration = ""
     self.InterfaceRanges = []
+    
+"""Juniper Device Type"""
+class DeviceType:
+  Unknown = 0
+  Switch = 1
+  Router = 2
+  Firewall = 4
+    
 ################### Script entry point ###################
 if ConnectionInfo.Command == "CreateInstance":
   ActionResult = JunOS()
