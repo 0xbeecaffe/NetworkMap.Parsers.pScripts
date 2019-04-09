@@ -21,8 +21,8 @@ import re
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
 from L3Discovery import NeighborProtocol
-# last changed : 2019.02.26
-scriptVersion = "5.0.4"
+# last changed : 2019.04.09
+scriptVersion = "5.0.5"
 class CiscoIOSRouter(L3Discovery.IRouter):
   # Beyond _maxRouteTableEntries only the default route will be queried
   _maxRouteTableEntries = 30000    
@@ -711,7 +711,7 @@ class RouterIDCalculator():
     l3interfaces = Session.ExecCommand("sh ip interface brief")
     if l3interfaces:
       try :
-        loopbacks = [intf.lower() for intf in l3interfaces.splitlines() if intf.lower().startswith("loopback")]
+        loopbacks = [intf.lower() for intf in l3interfaces.splitlines() if intf.lower().startswith("loopback") and GetIPAddressFromLine(intf)]
         if len(loopbacks) > 0 :
           # find the loopback with lowest number
           lowestLoopback = sorted(loopbacks, key=lambda i: int(i[8:10]))[0]
@@ -719,9 +719,9 @@ class RouterIDCalculator():
             globalRouterID = lowestLoopback.split()[1]
         else:
           # no loopbacks, find the interface with highest ip address
-          highestIPLine = sorted(l3interfaces, key=lambda i: IP2Int(GetIPAddressFromLine(i)))[-1]
+          highestIPLine = (sorted(l3interfaces.splitlines(), key=lambda i: IP2Int(GetIPAddressFromLine(i)))[-1]).strip()
           if highestIPLine:
-            globalRouterID = highestIPLine.split()[1]
+            globalRouterID = GetIPAddressFromLine(highestIPLine)
       except Exception as Ex :
         DebugEx.WriteLine("CiscoIOSRouter.CalculateRouterIDAndASNumber() : error while parsing interface information : " + str(Ex))
     
@@ -775,7 +775,7 @@ class RouterIDCalculator():
         # WARNING if more than one EIGRP process is running, generate error
         #        
         if len(eigrpGeneral.splitlines()) == 1 :
-          match = re.findall(r"(?<=ID )[\d.]{0,99}", eigrpGeneral, re.IGNORECASE)
+          match = re.findall(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", eigrpGeneral, re.IGNORECASE)
           if len(match) == 1 :
             self.RouterID[instanceName][str(thisProtocol)] = match[0]
             if globalRouterID == ConnectionInfo.DeviceIP : globalRouterID = match[0]
@@ -1062,6 +1062,8 @@ def GetColumnValue(textLine, headerLine, headerColumn, headerSeparator):
 def IP2Int(ip):
   """Converts a string literal ip address to its integer value"""
   try:
+    if not ip:
+      return -1
     o = map(int, ip.split('.'))
     res = (16777216 * o[0]) + (65536 * o[1]) + (256 * o[2]) + o[3]
     return res  
@@ -1072,14 +1074,19 @@ def GetIPAddressFromLine(line):
   """Extracts the first IP address match from a line of text and returns it
      Expected format is aaa.bbb.ccc.ddd"""
   address = re.findall(r"(?:[0-9]{1,3}\.){3}[0-9]{1,3}", line)
-  if len(address) == 1 : return address[0]
-  else: return ""  
+  if len(address) == 1 : 
+    return address[0]
+  else: 
+    return ""  
+  
 def GetIPAddressAndMaskFromLine(line):
   """Extracts the first match of an IP address and mask from a line of text and returns it
      Expected format is aaa.bbb.ccc.ddd/xx"""
   address = re.findall(r"(?:[0-9]{1,3}\.){3}[0-9]{1,3}\/\d{1,2}", line)
-  if len(address) == 1 : return address[0]
-  else: return "" 
+  if len(address) == 1 : 
+    return address[0]
+  else: 
+    return "" 
    
 ################### Script entry point ###################
 if ConnectionInfo.Command == "CreateInstance":
