@@ -21,8 +21,8 @@ import re
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
 from L3Discovery import NeighborProtocol
-# last changed : 2019.04.09
-scriptVersion = "5.0.5"
+# last changed : 2019.05.27
+scriptVersion = "5.0.6"
 class CiscoIOSRouter(L3Discovery.IRouter):
   # Beyond _maxRouteTableEntries only the default route will be queried
   _maxRouteTableEntries = 30000    
@@ -136,7 +136,8 @@ class CiscoIOSRouter(L3Discovery.IRouter):
             if len(r_serial) > 0:
               self._SystemSerial = r_serial[0]
           else:
-            # try to parse sh_version to get system serial numbers
+            # try to parse sh_version to get system serial number
+            
             # TODO : missing command output sample to process
             pass  
         else:
@@ -188,22 +189,10 @@ class CiscoIOSRouter(L3Discovery.IRouter):
       supportedProtocols = System.Enum.GetValues(clr.GetClrType(L3Discovery.NeighborProtocol))
       for thisProtocol in supportedProtocols :
         if str(thisProtocol).lower() in mathcedProtocolNames : 
-          # In case we are checking the global routing instance. we must perform further checks
-          # because "show ip protocols" reports all protocols across all VRFs unfortunately
-          if instanceName == defaultInstanceName : 
-            if thisProtocol == L3Discovery.NeighborProtocol.BGP:
-              b = Session.ExecCommand("show ip bgp summary")
-              if b : self._runningRoutingProtocols[ instanceName ].Add(thisProtocol)
-            elif thisProtocol == L3Discovery.NeighborProtocol.OSPF:
-              o = Session.ExecCommand("show ip ospf neighbor")
-              if o : self._runningRoutingProtocols[ instanceName ].Add(thisProtocol)
-            elif thisProtocol == L3Discovery.NeighborProtocol.EIGRP:
-              e = Session.ExecCommand("show ip eigrp neighbor")
-              if e : self._runningRoutingProtocols[ instanceName ].Add(thisProtocol)
-            elif thisProtocol == L3Discovery.NeighborProtocol.RIP:
-              e = Session.ExecCommand("show ip rip neighbor")
-              if e : self._runningRoutingProtocols[ instanceName ].Add(thisProtocol)
-          else:
+          # We need to make sure we can get the RouterID for protocol/instance pair
+          # otherwise must not report a protocol as active for a routing instance
+          rid = self._ridCalculator.GetRouterID(thisProtocol, instance)
+          if rid:
             self._runningRoutingProtocols[ instanceName ].Add(thisProtocol)
     
       # STATIC 
@@ -363,7 +352,11 @@ class CiscoIOSRouter(L3Discovery.IRouter):
       # construct CLI command
       cmd = "show vrf"
       # execute command and parse result
-      vrf_lines = Session.ExecCommand(cmd).splitlines()
+      vrfResponse = Session.ExecCommand(cmd)
+      if vrfResponse.startswith("%") or "^" in vrfResponse or "invalid input" in vrfResponse :
+        cmd = "show ip vrf"
+        vrfResponse = Session.ExecCommand(cmd)
+      vrf_lines = vrfResponse.splitlines()
       # first line is column header
       headerLine = vrf_lines.pop(0)
       # expected headers are : Name, Default RD, Protocols, Interfaces
@@ -681,125 +674,144 @@ class RouterIDCalculator():
     self.RouterID = {}
     # BGPASNumber is a dictionary, keyed by RoutingInstance name
     self.BGPASNumber = {}  
+    # The global router ID
+    self.GlobalRouterID = ""
+    
+  def GetGlobalRouterID(self):
+    """Determine default router ID"""
+    if not self.GlobalRouterID :
+      self.GlobalRouterID = ConnectionInfo.DeviceIP
+      l3interfaces = Session.ExecCommand("sh ip interface brief")
+      if l3interfaces:
+        try :
+          loopbacks = [intf.lower() for intf in l3interfaces.splitlines() if intf.lower().startswith("loopback") and GetIPAddressFromLine(intf)]
+          if len(loopbacks) > 0 :
+            # find the loopback with lowest number
+            lowestLoopback = sorted(loopbacks, key=lambda i: int(i[8:10]))[0]
+            if lowestLoopback:
+              self.GlobalRouterID = lowestLoopback.split()[1]
+          else:
+            # no loopbacks, find the interface with highest ip address
+            highestIPLine = (sorted(l3interfaces.splitlines(), key=lambda i: IP2Int(GetIPAddressFromLine(i)))[-1]).strip()
+            if highestIPLine:
+              self.GlobalRouterID = GetIPAddressFromLine(highestIPLine)
+        except Exception as Ex :
+          DebugEx.WriteLine("CiscoIOSRouter.CalculateRouterIDAndASNumber() : error while parsing interface information : " + str(Ex))
     
   def GetRouterID(self, protocol, instance):
     """Return the RouterID for given instance and protocol"""
     rid = ""
     instanceName = self.Router._defaultRoutingInstanceName
     if instance : instanceName = instance.Name
-    if len(self.RouterID.get(instanceName, {})) == 0 : self.CalculateRouterIDAndASNumber(instance)
+    # if not any routerID is know for this instance, get it for the given protocol
+    if not self.RouterID.get(instanceName, None): 
+      self.CalculateRouterIDAndASNumber(instance, protocol)
     instanceRIDs = self.RouterID.get(instanceName, None)
     if instanceRIDs :
       rid = instanceRIDs.get(str(protocol), "")
+      # if routerID is unknown for this protocol, get it
+      if not rid:
+        self.CalculateRouterIDAndASNumber(instance, protocol)
+        rid = instanceRIDs.get(str(protocol), "")
     return rid
     
   def GetBGPASNumber(self, instance):
+    """Get BGP AS number for the given instance"""
     instanceName = self.Router._defaultRoutingInstanceName
     if instance : instanceName = instance.Name
     if len(self.BGPASNumber) == 0 : 
-      self.CalculateRouterIDAndASNumber(instance)
+      self.CalculateRouterIDAndASNumber(instance, L3Discovery.NeighborProtocol.BGP)
     return self.BGPASNumber.get(instanceName, "")
           
-  def CalculateRouterIDAndASNumber(self, instance):
-    """Parse the RouterID and AS number for the requested RoutingInstance"""  
+  def CalculateRouterIDAndASNumber(self, instance, protocol):
+    """Parse the RouterID and AS number for the requested RoutingInstance and Protocol"""  
     instanceName = self.Router._defaultRoutingInstanceName
     if instance : instanceName = instance.Name
     if self.RouterID.get(instanceName, None) == None: self.RouterID[instanceName] = {}
-    
-    # Determine default router ID
-    globalRouterID = ConnectionInfo.DeviceIP
-    l3interfaces = Session.ExecCommand("sh ip interface brief")
-    if l3interfaces:
-      try :
-        loopbacks = [intf.lower() for intf in l3interfaces.splitlines() if intf.lower().startswith("loopback") and GetIPAddressFromLine(intf)]
-        if len(loopbacks) > 0 :
-          # find the loopback with lowest number
-          lowestLoopback = sorted(loopbacks, key=lambda i: int(i[8:10]))[0]
-          if lowestLoopback:
-            globalRouterID = lowestLoopback.split()[1]
-        else:
-          # no loopbacks, find the interface with highest ip address
-          highestIPLine = (sorted(l3interfaces.splitlines(), key=lambda i: IP2Int(GetIPAddressFromLine(i)))[-1]).strip()
-          if highestIPLine:
-            globalRouterID = GetIPAddressFromLine(highestIPLine)
-      except Exception as Ex :
-        DebugEx.WriteLine("CiscoIOSRouter.CalculateRouterIDAndASNumber() : error while parsing interface information : " + str(Ex))
-    
+    self.GetGlobalRouterID()
+    if protocol == L3Discovery.NeighborProtocol.BGP:
+      # construct CLI command
+      if instanceName == self.Router._defaultRoutingInstanceName :
+        cmd = "show ip bgp summary"
+      else:
+        cmd = "show ip bgp vpnv4 vrf {0} summary".format(instanceName)
+      
+      bgpSummary = Session.ExecCommand(cmd)
+      match = re.findall(r"(?<=BGP router identifier )[\d.]{0,99}", bgpSummary, re.IGNORECASE)
+      if len(match) == 1 :
+        self.RouterID[instanceName][str(protocol)] = match[0]
+        if self.GlobalRouterID == ConnectionInfo.DeviceIP : 
+          self.GlobalRouterID = match[0]
+      
+      # get also the BGP AS number
+      match = re.findall(r"(?<=local AS number )[\d.]{0,99}", bgpSummary, re.IGNORECASE) 
+      if len(match) == 1 :
+        self.BGPASNumber[instanceName] = match[0]
+      
+    elif protocol == L3Discovery.NeighborProtocol.OSPF:
+      cmd = "show ip ospf | i ID"
+      ospfGeneral = Session.ExecCommand(cmd)
+      # expecting output like this:
+      # Routing Process "ospf 200" with ID 10.9.254.251
+      # Routing Process "ospf 100" with ID 192.168.1.1
+      for ospfProcessLine in ospfGeneral.splitlines():
+        processID = re.findall(r"(?<=\"ospf ).\d{1,8}", ospfProcessLine, re.IGNORECASE)
+        if len(processID) == 1 :
+          vrfMatchedForProcess = False
+          # construct CLI command to check if OSPF process is runinng for VRF
+          if instanceName == self.Router._defaultRoutingInstanceName :
+            cmd = "show ip ospf {0} | i VRF".format(processID[0])
+            # we are good if response is empty
+            vrfMatchedForProcess = Session.ExecCommand(cmd) == ""
+          else:
+            cmd = "show ip ospf {0} | i VRF {1}".format(processID[0], instanceName)
+            # we are good if response is NOT empty
+            vrfMatchedForProcess = Session.ExecCommand(cmd) != ""
+          if vrfMatchedForProcess :
+            ospfID = re.findall(r"(?<=ID )[\d.]{0,99}", ospfProcessLine, re.IGNORECASE)
+            if len(ospfID) == 1 :
+              self.RouterID[instanceName][str(protocol)] = ospfID[0]
+              if self.GlobalRouterID == ConnectionInfo.DeviceIP : 
+                self.GlobalRouterID = ospfID[0]
    
-    # get the running routing protocols for this routing instance
-    runnintRoutingProtocols = self.Router.ActiveProtocols(instance)
-    for thisProtocol in runnintRoutingProtocols:  
-      if thisProtocol == L3Discovery.NeighborProtocol.BGP:
-        # construct CLI command
-        if instanceName == self.Router._defaultRoutingInstanceName :
-          cmd = "show ip bgp summary"
-        else:
-          cmd = "show ip bgp vpnv4 vrf {0} summary".format(instanceName)
-        
-        bgpSummary = Session.ExecCommand(cmd)
-        match = re.findall(r"(?<=BGP router identifier )[\d.]{0,99}", bgpSummary, re.IGNORECASE)
+    elif protocol == L3Discovery.NeighborProtocol.EIGRP :
+      cmd = "show ip eigrp topology | i ID"
+      eigrpGeneral = Session.ExecCommand(cmd)
+      # expecting output like this:
+      # IP - EIGRP Topology Table for AS(10) / ID(10.9.240.1)
+      # IP - EIGRP Topology Table for AS(20) / ID(10.9.240.1)
+      #
+      # TODO :
+      # WARNING if more than one EIGRP process is running, generate error
+      #        
+      if len(eigrpGeneral.splitlines()) == 1 :
+        match = re.findall(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", eigrpGeneral, re.IGNORECASE)
         if len(match) == 1 :
-          self.RouterID[instanceName][str(thisProtocol)] = match[0]
-          if globalRouterID == ConnectionInfo.DeviceIP : globalRouterID = match[0]
+          self.RouterID[instanceName][str(protocol)] = match[0]
+          if self.GlobalRouterID == ConnectionInfo.DeviceIP : 
+            self.GlobalRouterID = match[0]
+      else:
+        raise ValueError("Parsing more than one EIGRP process is not supportedby parser")        
+              
+    elif protocol == L3Discovery.NeighborProtocol.CDP:
+      # only for default (global) routing instance
+      if instanceName == self.Router._defaultRoutingInstanceName :
+        self.RouterID[instanceName][str(protocol)] = self.Router.GetHostName()
         
-        # get also the BGP AS number
-        match = re.findall(r"(?<=local AS number )[\d.]{0,99}", bgpSummary, re.IGNORECASE) 
-        if len(match) == 1 :
-          self.BGPASNumber[instanceName] = match[0]
-        
-      elif thisProtocol == L3Discovery.NeighborProtocol.OSPF:
-        cmd = "show ip ospf | i ID"
-        ospfGeneral = Session.ExecCommand(cmd)
-        # expecting output like this:
-			  # Routing Process "ospf 200" with ID 10.9.254.251
-				# Routing Process "ospf 100" with ID 192.168.1.1
-        #
-        # WARNING if more than one EIGRP process is running, generate error
-        #        
-        if len(ospfGeneral.splitlines()) == 1 :
-          match = re.findall(r"(?<=ID )[\d.]{0,99}", ospfGeneral, re.IGNORECASE)
-          if len(match) == 1 :
-            self.RouterID[instanceName][str(thisProtocol)] = match[0]
-            if globalRouterID == ConnectionInfo.DeviceIP : globalRouterID = match[0]
-        else:
-          raise ValueError("Parsing more than one OSPF process is not supported by parser")
-     
-      elif thisProtocol == L3Discovery.NeighborProtocol.EIGRP :
-        cmd = "show ip eigrp topology | i ID"
-        eigrpGeneral = Session.ExecCommand(cmd)
-        # expecting output like this:
-        # IP - EIGRP Topology Table for AS(10) / ID(10.9.240.1)
-        # IP - EIGRP Topology Table for AS(20) / ID(10.9.240.1)
-        #
-        # TODO :
-        # WARNING if more than one EIGRP process is running, generate error
-        #        
-        if len(eigrpGeneral.splitlines()) == 1 :
-          match = re.findall(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", eigrpGeneral, re.IGNORECASE)
-          if len(match) == 1 :
-            self.RouterID[instanceName][str(thisProtocol)] = match[0]
-            if globalRouterID == ConnectionInfo.DeviceIP : globalRouterID = match[0]
-        else:
-          raise ValueError("Parsing more than one EIGRP process is not supportedby parser")        
-                
-      elif thisProtocol == L3Discovery.NeighborProtocol.CDP:
-        # only for default (global) routing instance
-        if instanceName == self.Router._defaultRoutingInstanceName :
-          self.RouterID[instanceName][str(thisProtocol)] = self.Router.GetHostName()
-          
-      elif thisProtocol == L3Discovery.NeighborProtocol.RIP:
-        # always use global router-id
-        # TODO : this may require tuning
-        self.RouterID[instanceName][str(thisProtocol)] = globalRouterID       
-        
-      elif thisProtocol == L3Discovery.NeighborProtocol.STATIC:  
-        # always use global router-id
-        self.RouterID[instanceName][str(thisProtocol)] = globalRouterID 
-        
-      else :
-        self.RouterID[instanceName][str(thisProtocol)] = globalRouterID   
+    elif protocol == L3Discovery.NeighborProtocol.RIP:
+      # always use global router-id
+      # TODO : this may require tuning
+      self.RouterID[instanceName][str(protocol)] = self.GlobalRouterID       
+      
+    elif protocol == L3Discovery.NeighborProtocol.STATIC:  
+      # always use global router-id
+      self.RouterID[instanceName][str(protocol)] = self.GlobalRouterID 
+      
+    else :
+        self.RouterID[instanceName][str(protocol)] = self.GlobalRouterID   
           
   def Reset(self):
+    self.GlobalRouterID = ""
     self.RouterID = {}
     self.BGPASNumber = {}
     
@@ -942,7 +954,7 @@ class InterfaceParser():
       self.Interfaces[instanceName] = [] 
     # check interface list for this instance
     if len(self.Interfaces[instanceName]) == 0 : self.ParseInterfaces(instance)
-    foundInterface = next((intf for intf in self.Interfaces[instanceName] if intf.Name == ifName.strip()), None)
+    foundInterface = next((intf for intf in self.Interfaces[instanceName] if intf.Name.lower() == ifName.lower().strip()), None)
     return foundInterface
     
   def GetInterfaceNameByAddress(self, ipAddress, instance):
