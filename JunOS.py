@@ -20,7 +20,7 @@ import PGT.Common
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
 # last changed : 2019.03.18
-scriptVersion = "5.0.9"
+scriptVersion = "5.1.0"
 class JunOS(L3Discovery.IRouter):
   # Beyond _maxRouteTableEntries only the default route will be queried
   _maxRouteTableEntries = 30000    
@@ -52,7 +52,7 @@ class JunOS(L3Discovery.IRouter):
     # The RouterIDCalculator object
     self._ridCalculator = RouterIDCalculator(self)
     # The InterfaceParser object
-    self._interfaceParser = InterfaceParser(self)
+    self._interfaceParser = InterfaceParser()
     
       
   def GetHostName(self):
@@ -376,7 +376,7 @@ class JunOS(L3Discovery.IRouter):
           cmd = "show route instance operational logical-system {0} | match {1}".format(logicalSystemName, vrfTag)               
         # execute command and parse result
         cmdResult = Session.ExecCommand(cmd)
-        instanceNames = c = map(lambda e: e.strip("{0} ".format(vrfTag)), filter(lambda e: not e.startswith("{"), cmdResult.splitlines()))
+        instanceNames = c = map(lambda e: e.strip("{0} ".format(vrfTag)), filter(lambda e: not e.startswith("{master"), cmdResult.splitlines()))
         # Add all other instances
         for thisInstanceName in instanceNames:
           thisInstance = L3Discovery.RoutingInstance()
@@ -698,10 +698,8 @@ class InterfaceRange():
     
 class InterfaceParser(): 
   """Manage JunOS interfaces"""
-  def __init__(self, router):
-    # self.Router will hold a reference to the JunOS router instance
-    self.Router = router
-    # These are the interfaces collected by ParseInterfaces() method. A dictionary, keyed by routing instance name
+  def __init__(self):
+      # These are the interfaces collected by ParseInterfaces() method. A dictionary, keyed by routing instance name
     self.Interfaces = {}
     # All interfaces configuration. Unparsed, as returned by CLI command
     self.AllInterfaceConfiguration = ""
@@ -1046,8 +1044,7 @@ class InterfaceParser():
     
   def IsInterrestingInterface(self, intfName):
     """ Determines if a given name is an interface name we want to parse"""
-    return intfName.startswith("ge-") or intfName.startswith("xe-") or intfName.startswith("et-") or intfName.startswith("reth") or intfName.startswith("fxp") or intfName.startswith("ae") or intfName.startswith("irb") or intfName.startswith("vlan") or intfName.startswith("lo")
-    
+    return intfName.startswith("ge-") or intfName.startswith("xe-") or intfName.startswith("et-") or intfName.startswith("ae") or intfName.startswith("irb") or intfName.startswith("vlan") or intfName.startswith("lo")
       
   def Reset(self) :
     self.Interfaces = {}
