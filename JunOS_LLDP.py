@@ -20,7 +20,7 @@ import PGT.Common
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
 # last changed : 2019.03.20
-scriptVersion = "5.0.0"
+scriptVersion = "5.1.0"
 moduleName = "JunOS LLDP Parser"
 class JunOS_LLDP(L3Discovery.IGenericProtocolParser):
   def __init__(self):
@@ -186,36 +186,19 @@ class JunOS_LLDP(L3Discovery.IGenericProtocolParser):
     return "{0} v{1}".format(moduleName, scriptVersion)
   
   def GetSupportedProtocols(self):
-    """Can return an specific routing protocol parser responsible for handling that particular protocol's functionality"""
+    """Returns the list of neighbor protocols supported by this parser"""
     return self.ParsingForProtocols
+    
   def ProtocolDependentParser(self, protocol):
     """Can return an specific routing protocol parser responsible for handling that particular protocol's functionality"""
     return None
     
   ### ---=== Helper functions ===--- ###  
-  
-  def IsMACAddress(self, address):
-    """ Determines if a given address is formatted as a MAC address"""
-    result = re.findall(r"[0-9a-f]+:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+", address, re.IGNORECASE)
-    return len(result) == 1
-    
-  def IsIPv4Address(self, address):
-    """ Determines if a given address is formatted as an IPV4 address"""
-    result = re.findall(r"\d{1,3}.\d{1,3}.\d{1,3}.\d{1,3}", address)
-    return len(result) == 1
-    
+     
   def IsInterrestingInterface(self, intfName):
     """ Determines if a given name is an interface name we want to parse"""
     return intfName.startswith("ge-") or intfName.startswith("xe-") or intfName.startswith("et-") or intfName.startswith("ae") or intfName.startswith("irb") or intfName.startswith("vlan") or intfName.startswith("lo")
     
-  def GetInterfaceNames(self, text):
-    """ Retrieves Juniper switch interface names from text"""
-    return re.findall(r"(?:(?:xe|ge|et)-\d+\/\d+\/\d+|ae\d{1,2}|eth[a-z0-9\/]+)", text, re.IGNORECASE)
-    
-  def IsInterfaceName(self, text):  
-    """ Verifies if a given text is a valid Juniper switch interface name"""
-    matchresult = self.GetInterfaceNames(text)
-    return len(matchresult) == 1 and matchresult[0] == text  
         
 ################### Script entry point ###################
 if ConnectionInfo.Command == "CreateInstance":
