@@ -22,7 +22,7 @@ from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
 from L3Discovery import NeighborProtocol
 # last changed : 2019.04.09
-scriptVersion = "5.1.0"
+scriptVersion = "5.2.0"
 class CiscoIOSRouter(L3Discovery.IRouter):
   # Beyond _maxRouteTableEntries only the default route will be queried
   _maxRouteTableEntries = 30000    
@@ -320,7 +320,7 @@ class CiscoIOSRouter(L3Discovery.IRouter):
     # -- register the last one
     if ri and VIPAddress and GroupID :
       neighborRegistry.RegisterNHRPPeer(self, instance, ri, L3Discovery.NHRPProtocol.HSRP, isActive, VIPAddress, GroupID, PeerAddress)    
-    
+     
   def Reset(self):
     """Resets all instance variables to its default value"""
     self._versionInfo = None
