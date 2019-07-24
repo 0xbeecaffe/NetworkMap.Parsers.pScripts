@@ -19,8 +19,8 @@ import L3Discovery
 import PGT.Common
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
-# last changed : 2019.03.18
-scriptVersion = "5.1.0"
+# last changed : 2019.07.24
+scriptVersion = "5.3.0"
 class JunOS(L3Discovery.IRouter):
   # Beyond _maxRouteTableEntries only the default route will be queried
   _maxRouteTableEntries = 30000    
@@ -278,9 +278,6 @@ class JunOS(L3Discovery.IRouter):
     
   def RegisterNHRP(self, neighborRegistry, instance):
     """Performs NHRP database registration"""
-    # neighborRegistry :The NetworkRegistry object is received in ConnectionInfo.aParam
-    # instance :The Routing instance reference is received in cParam
-    # collect VRRP information
     vrrpSummary = Session.ExecCommand("show vrrp summary")
     if "not running" in vrrpSummary:
       return
@@ -326,6 +323,11 @@ class JunOS(L3Discovery.IRouter):
     # -- register the last one
     if ri != None and VIPAddress != "" and GroupID != "" :
       neighborRegistry.RegisterNHRPPeer(iRouter, instance, ri, L3Discovery.NHRPProtocol.VRRP, isActive, VIPAddress, GroupID, PeerAddress)    
+  
+  def RegisterTunnels(self, neighborRegistry, instance):
+    """Performs registration of active tunnels"""
+    # Not implemented for JunOS
+    pass
     
   def Reset(self):
     """Resets all instance variables to its default value"""
@@ -705,7 +707,11 @@ class InterfaceParser():
     self.AllInterfaceConfiguration = ""
     # Interface config cache. A dictionary keyed by Interface Name
     self._interfaceConfigurations = {}
-    # List of interface-ranges
+    # VLAN config cache containing VLAN names and id-s, keyed by vlan name
+    self._vlanNames = {}
+    # VLAN config cache containing VLAN names and id-s, keyed by vlan-id
+    self._vlanIDs = {}
+    # List of interface-ranges    
     self.InterfaceRanges = []
     
   def ParseInterfaces(self, instance) :
@@ -724,7 +730,7 @@ class InterfaceParser():
       interfaces = Session.ExecCommand("show interfaces routing-instance {0} terse".format(instanceName)).splitlines()
     else :
       interfaces = Session.ExecCommand("show interfaces terse").splitlines()
-      
+    
     # Because JunOS reports the VRRP VIP addresses in "show interface terse" output, it is necessary to 
     # check interface ip of VRRP enabled interfaces
     if instanceName.lower() != "master" :
@@ -778,13 +784,13 @@ class InterfaceParser():
                     # vlan tagging is enabled, so this ius an L3 subinterface
                     phri.PortMode = L3Discovery.RouterInterfacePortMode.L3Subinterface
                     if phri.VLANS == None : existingVLANs = []
-                    else : existingVLANs = filter(None, phri.VLANS.split("|"))
+                    else : existingVLANs = filter(None, phri.VLANS.split(","))
                     # Get vlan-id from configuration. If not found, assume lun number equals to the VLAN ID
                     m_vlanID = re.findall(r"(?<=vlan-id )\d+", ri.Configuration)
                     if len(m_vlanID) == 1 : 
                       VLANID = m_vlanID[0]
-                      existingVLANs.append(VLANID)
-                      phri.VLANS = "|".join(existingVLANs) 
+                      existingVLANs.append(self.FormatVLANSEntry(VLANID))
+                      phri.VLANS = ",".join(existingVLANs) 
                   else:
                     # vlan tagging is enabled, so this ius an L3 subinterface
                     phri.PortMode = L3Discovery.RouterInterfacePortMode.Routed
@@ -814,7 +820,9 @@ class InterfaceParser():
               vlans = re.findall(r"(?<=members )\[?([\s\w\-]+)", ri.Configuration, re.IGNORECASE)
               if len(vlans) == 1 : 
                 vlanList = filter(None, vlans[0].strip().split(" "))
-                ri.VLANS = "|".join(vlanList)
+                # assume vlanList contain  either vlanIDs or vlanNames
+                formattedVLANList = map(lambda f: self.FormatVLANSEntry(f), vlanList)
+                ri.VLANS = ",".join(formattedVLANList)
               self.Interfaces[instanceName].Add(ri)   
               # If this is a logical unit, let the physical interface inherit properties
               if len(intfLun) == 1:
@@ -832,7 +840,7 @@ class InterfaceParser():
                 # Found the interface in a range, inherit range properties
                 if ir.portMode == "access" : ri.PortMode =  L3Discovery.RouterInterfacePortMode.Access
                 elif ir.portMode == "trunk" : ri.PortMode =  L3Discovery.RouterInterfacePortMode.Trunk
-                ri.VLANS = "|".join(ir.vlanMembers)
+                ri.VLANS = ",".join(ir.vlanMembers)
               
           elif ifProtocol == "aenet" :
             # words should look like : xe-3/0/44.0,up,up,aenet,-->,ae3.0      
@@ -872,6 +880,39 @@ class InterfaceParser():
         ifName = words[0]
         foundInterface = next((intf for intf in self.Interfaces[instanceName] if intf.Name == ifName), None)
         if foundInterface != None : foundInterface.Description = " ".join([t for t in words if words.index(t) >= 3])
+     
+  def FormatVLANSEntry(self, expression):
+    """Constructs the formated VLANS lsit entry from vlanName or vlanID. If VLANName to vlan-id assignment exists returns like VLANName|VLANID or if not, simply expression itself"""
+    if not self._vlanNames or len(self._vlanNames) == 0 :
+      self._vlanNames = {}
+      self._vlanIDs = {}
+      vlanInfo = Session.ExecCommand("show vlans")
+      # get regex matches group 1
+      vlanNames = GetRegexGroupMatches(r"\s+(\S+)\s+(\d+)", vlanInfo, 1)
+      # get regex matches group 2
+      vlanIDs = GetRegexGroupMatches(r"\s+(\S+)\s+(\d+)", vlanInfo, 2)
+      if len(vlanNames) == len(vlanIDs):     
+        for index in range(0, len(vlanNames)) :
+          self._vlanNames[vlanIDs[index]] = vlanNames[index].strip()
+          self._vlanIDs[vlanNames[index]] = vlanIDs[index].strip()
+      else:
+        # do not throw error but log the error
+        DebugEx.WriteLine("JunOS.FormatVLANSEntry() : error, unable to extract VLAN IDs and Names. Got different number of vlan-ids than vlan names.")   
+    if len(self._vlanNames) > 0 :
+      # assume expression is a vlan name and check if we can find vlan-id by this name
+      vlanID = self._vlanIDs.get(expression, None)
+      if vlanID:
+        return "{0}|{1}".format(expression, vlanID)
+      else:
+        # assume expression a vlan-id and check if we can find vlan Name by id
+        vlanName = self._vlanNames.get(expression, None)
+        if vlanName :
+          return "{0}|{1}".format(vlanName, expression)
+        else:
+          return expression
+    else :
+      return expression
+    
   def GetRoutedInterfaces(self, instance):
     """ Return the list of RouterInterfaces that have a valid IPAddress"""
     # Init interface dictionary for instance
@@ -1050,13 +1091,29 @@ class InterfaceParser():
     self.Interfaces = {}
     self.AllInterfaceConfiguration = ""
     self.InterfaceRanges = []
-    
+    self._vlanNames = {}
+    self._vlanIDs = {}
+
+
 """Juniper Device Type"""
 class DeviceType:
   Unknown = 0
   Switch = 1
   Router = 2
   Firewall = 4
+
+### ---=== Helper functions ===--- ###   
+def GetRegexGroupMatches(pattern, text, groupNum):
+  """Returns the list of values of specified Regex group number for all matches. Returns Nonde if not matched or groups number does not exist"""
+  try:
+    result = []
+    mi = re.finditer(pattern, text, re.MULTILINE)
+    for matchnum, match in enumerate(mi, start=1):
+      # regex group 1 contains the connection remote address
+      result.append(match.group(groupNum))
+    return result
+  except :
+    return None       
     
 ################### Script entry point ###################
 if ConnectionInfo.Command == "CreateInstance":
