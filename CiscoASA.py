@@ -22,11 +22,11 @@ from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
 from L3Discovery import NeighborProtocol
 from PGT.Common import IPOperations
-# last changed : 2019.04.09
-scriptVersion = "0.0.1"
+# last changed : 2019.08.03
+scriptVersion = "0.4"
 class CiscoASA(L3Discovery.IRouter):
   # Beyond _maxRouteTableEntries only the default route will be queried
-  _maxRouteTableEntries = 30000    
+  _maxRouteTableEntries = 10000    
   _defaultRoutingInstanceName = ""
   def __init__(self):
     # The device version info string
@@ -55,6 +55,8 @@ class CiscoASA(L3Discovery.IRouter):
     self._ridCalculator = RouterIDCalculator(self)
     # The InterfaceParser object
     self._interfaceParser = InterfaceParser(self)
+    # The vendor definition name this parser supports
+    self._supportedVendor = "Cisco-ASA"
     
       
   def GetHostName(self):
@@ -109,6 +111,11 @@ class CiscoASA(L3Discovery.IRouter):
     global scriptVersion
     return "Cisco Adaptive Security Appliance support module - Python Parser v{0}".format(scriptVersion)
     
+  def GetSupportedEngineVersion(self):
+    """Returns the regex pattern covering supported Discovery Engine versions"""
+    global scriptVersion
+    return r"^7\.5.*"    
+    
   def GetSystemSerial(self):
     """Returns System serial numbers as a string, calculated from Inventory"""
     if not self._SystemSerial :
@@ -118,6 +125,20 @@ class CiscoASA(L3Discovery.IRouter):
       if len(SNs) > 0 :
         self._SystemSerial = SNs[0]
     return self._SystemSerial
+  def GetSystemMAC(self, instance):
+    """Returns the CSV list of MAC addresses associated with the local system for the given routing instance"""
+    # For ASA, we skip the instance. Cotexts are not yet supported by this parser
+    systemMACs = []
+    v = self.GetVersion()
+    rep_systemMACs = r"(?!0000)[a-f,0-9]{4}.[a-f,0-9]{4}.[a-f,0-9]{4}"
+    try:
+      ri_systemMACs = re.finditer(rep_systemMACs, v, re.MULTILINE | re.IGNORECASE)
+      for index, match in enumerate(ri_systemMACs):
+        systemMACs.append(match.group())
+      
+    except Exception as Ex:
+      DebugEx.WriteLine("CiscoASA.GetSystemMAC() : unexpected error : {0}".format(str(Ex)))
+    return ",".join(systemMACs)
     
   def GetDeviceType(self):
     """Returns Type string that can be Switch, Router or Firewall, depending on Model"""
@@ -125,7 +146,7 @@ class CiscoASA(L3Discovery.IRouter):
     
   def GetVendor(self):
     """Must return a string matching the Vendor name this parser is responible for"""
-    return "Cisco-ASA"
+    return self._supportedVendor
     
   def GetVersion(self):
     """Must return device version string 	"""
@@ -175,9 +196,7 @@ class CiscoASA(L3Discovery.IRouter):
             self._runningRoutingProtocols[ instanceName ].Add(thisProtocol)
     
       # STATIC 
-      cmd = "show ip route static"
-      if instanceName != defaultInstanceName:
-        cmd = "show ip route vrf {0} static".format(instanceName)
+      cmd = "show route static"
       response = Session.ExecCommand(cmd);  
       if response : 
         self._runningRoutingProtocols[instance.Name].append(NeighborProtocol.STATIC)  
@@ -189,8 +208,8 @@ class CiscoASA(L3Discovery.IRouter):
       # VPN - supporting L2L IPSec
       if instanceName == defaultInstanceName:
         ipsecTunnels = Session.ExecCommand("show vpn-sessiondb summary | i IPsec")
-        numbers = GetRegexGroupMatches(r"\s(\d+)", ipsecTunnels, 1)
-        if len(numbers) > 0 and int(numbers[0]) > 0 :
+        numbers = GetRegexGroupMatches(r"\s+ikev\d\sipsec\s+:\s+(\d)", ipsecTunnels, 1)
+        if any(n > 0 for n in numbers):
           self._runningRoutingProtocols[instanceName].Add(NeighborProtocol.IPSEC)
           pass    
           
@@ -293,7 +312,6 @@ class CiscoASA(L3Discovery.IRouter):
     if ri and VIPAddress and GroupID :
       neighborRegistry.RegisterNHRPPeer(self, instance, ri, L3Discovery.NHRPProtocol.HSRP, isActive, VIPAddress, GroupID, PeerAddress)    
   
-
     
   
   def Reset(self):
@@ -332,7 +350,7 @@ class CiscoASA(L3Discovery.IRouter):
       # ASA does not natively support VRFs, so add the default (global) instance only
       defInstance = L3Discovery.RoutingInstance()
       defInstance.LogicalSystemName = logicalSystemName
-      defInstance.DeviceVendor = "Cisco"
+      defInstance.DeviceVendor = self._supportedVendor
       defInstance.Name = self._defaultRoutingInstanceName
       instances.append(defInstance)
       self._routingInstances[logicalSystemName] = instances
@@ -438,7 +456,7 @@ class CiscoASA(L3Discovery.IRouter):
             prefixAndMask = GetIPAddressAndSubnetMaskFromLine(rLine)
             if prefixAndMask:
               prefix = prefixAndMask[0]
-              maskLength = int(IPOperations.GetMaskLength(prefixAndMask[1]))
+              maskLength = IPOperations.GetMaskLength(prefixAndMask[1])
               # this line should also contain the out interface as the last word
               words = filter(None, rLine.split(','))
               asaNameif = words[-1]
@@ -453,7 +471,7 @@ class CiscoASA(L3Discovery.IRouter):
               prefixAndMask = GetIPAddressAndSubnetMaskFromLine(rLine)
               if prefixAndMask:
                 prefix = prefixAndMask[0]
-                maskLength = int(IPOperations.GetMaskLength(prefixAndMask[1]))
+                maskLength = IPOperations.GetMaskLength(prefixAndMask[1])
                 expectingNextHop = True                    
                 
             if expectingNextHop:
@@ -485,7 +503,7 @@ class CiscoASA(L3Discovery.IRouter):
             rte = L3Discovery.RouteTableEntry()
             rte.RouterID = self.RouterID(thisProtocol, instance)
             rte.Prefix = prefix
-            rte.MaskLength = maskLength
+            rte.MaskLength = str(maskLength)
             rte.Protocol = str(thisProtocol)
             rte.AD = adminDistance
             rte.Metric = routeMetric
@@ -753,15 +771,24 @@ class InterfaceParser():
     return foundInterface   
     
   def GetInterfaceByName(self, ifName, instance):
-    """Returns a RouterInterface object for the interface specified by its name"""        
+    """Returns a RouterInterface object for the interface specified by its name or ASA nameif interface property name"""        
     # Init interface dictionary for instance
     instanceName = self.Router._defaultRoutingInstanceName
     if instance : instanceName = instance.Name
+    # initialize instance interfaces if missing
     if self.Interfaces.get(instanceName, None) == None:
       self.Interfaces[instanceName] = [] 
     # check interface list for this instance
-    if len(self.Interfaces[instanceName]) == 0 : self.ParseInterfaces(instance)
-    foundInterface = next((intf for intf in self.Interfaces[instanceName] if intf.Name == ifName.strip()), None)
+    instanceInterfaces = self.Interfaces[instanceName]
+    if len(instanceInterfaces) == 0 : 
+      self.ParseInterfaces(instance)
+      instanceInterfaces = self.Interfaces[instanceName]
+    # check if the given ifName is a known ASA namif value
+    interfaceByName = self._nameIfs.get(ifName, None)
+    if not interfaceByName:
+      # not an ASA namif value, so simply use ifName for querying
+      interfaceByName = ifName
+    foundInterface = next((intf for intf in instanceInterfaces if intf.Name == interfaceByName.strip()), None)
     return foundInterface
     
   def GetInterfaceNameByAddress(self, ipAddress, instance):
@@ -939,7 +966,7 @@ def GetRegexGroupMatches(pattern, text, groupNum):
   """Returns the list of values of specified Regex group number for all matches. Returns Nonde if not matched or groups number does not exist"""
   try:
     result = []
-    mi = re.finditer(pattern, text, re.MULTILINE)
+    mi = re.finditer(pattern, text, re.MULTILINE | re.IGNORECASE)
     for matchnum, match in enumerate(mi):
       # regex group 1 contains the connection remote address
       result.append(match.group(groupNum))

@@ -172,6 +172,7 @@ class PaloAlto_VPN(L3Discovery.IGenericProtocolParser):
           rep_tunnelName = r"Gateway Tunnel Name\s+:(.*)" 
           rep_tunnelEnryption = r"(?:\s+Encryption\s+:)(.*)"
           rep_satellitePublicIP = r"(?:\s+Local Address\s+:)(\s+[.\d\/]+)"
+          rep_satelliteTunnelInterface = r"\s+Tunnel Interface\s+:\s(.+)"
           gateway_Address = GetRegexGroupMatches(rep_gwAddress, gwData, 1)[0].strip()  
           tunnel_StateStr =  GetRegexGroupMatches(rep_tunnelState, gwData, 1)[0].strip().lower()
           tunnel_State = L3Discovery.NeighborState.Down;
@@ -186,7 +187,11 @@ class PaloAlto_VPN(L3Discovery.IGenericProtocolParser):
           # get satellite details
           satelliteData = Session.ExecCommand("show global-protect-satellite satellite")
           tunnel_PublicAddress = GetRegexGroupMatches(rep_satellitePublicIP, satelliteData, 1)[0].strip()
-          tunnel_SourceAddress = "" # unknown
+          tunnel_InterfaceName = GetRegexGroupMatches(rep_satelliteTunnelInterface, satelliteData, 1)[0].strip()
+          tunnel_SourceAddress = "" 
+          ri = self.Router.GetInterfaceByName(tunnel_InterfaceName, instance)
+          if ri : 
+            tunnel_SourceAddress = ri.Address
           nRegistry.RegisterTunnel(self.Router, instance, L3Discovery.NeighborProtocol.IPSEC, L3Discovery.LinkType.P2P, tunnel_Name, tunnel_State, tunnel_PublicAddress, gateway_Address, tunnel_SourceAddress, tunnel_DestinationAddress, None, None, tunnel_Encryption, "unknown", None) 
            
     except Exception as Ex:

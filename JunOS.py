@@ -137,6 +137,11 @@ class JunOS(L3Discovery.IRouter):
     global scriptVersion
     return "Juniper, JunOS, Router Module for EX/QFX/MX/SRX- Python Parser v{0}".format(scriptVersion)
     
+  def GetSupportedEngineVersion(self):
+    """Returns the regex pattern covering supported Discovery Engine versions"""
+    global scriptVersion
+    return r"^7\.5.*"
+    
   def GetSystemSerial(self):
     """Returns System serial numbers as a string, calculated from Inventory"""
     if not self._SystemSerial :
@@ -1093,15 +1098,12 @@ class InterfaceParser():
     self.InterfaceRanges = []
     self._vlanNames = {}
     self._vlanIDs = {}
-
-
 """Juniper Device Type"""
 class DeviceType:
   Unknown = 0
   Switch = 1
   Router = 2
   Firewall = 4
-
 ### ---=== Helper functions ===--- ###   
 def GetRegexGroupMatches(pattern, text, groupNum):
   """Returns the list of values of specified Regex group number for all matches. Returns Nonde if not matched or groups number does not exist"""

@@ -112,6 +112,11 @@ class CiscoIOSRouter(L3Discovery.IRouter):
     global scriptVersion
     return "Cisco, IOS Router support module - Python Parser v{0}".format(scriptVersion)
     
+  def GetSupportedEngineVersion(self):
+    """Returns the regex pattern covering supported Discovery Engine versions"""
+    global scriptVersion
+    return r"^7\.5.*"    
+    
   def GetSystemSerial(self):
     """Returns System serial numbers as a string, calculated from Inventory"""
     if not self._SystemSerial :
