@@ -130,7 +130,7 @@ class CiscoASA(L3Discovery.IRouter):
     # For ASA, we skip the instance. Cotexts are not yet supported by this parser
     systemMACs = []
     v = self.GetVersion()
-    rep_systemMACs = r"(?!0000)[a-f,0-9]{4}.[a-f,0-9]{4}.[a-f,0-9]{4}"
+    rep_systemMACs = r"(?!0000)[a-f,0-9]{4}\.[a-f,0-9]{4}\.[a-f,0-9]{4}"
     try:
       ri_systemMACs = re.finditer(rep_systemMACs, v, re.MULTILINE | re.IGNORECASE)
       for index, match in enumerate(ri_systemMACs):
@@ -208,7 +208,7 @@ class CiscoASA(L3Discovery.IRouter):
       # VPN - supporting L2L IPSec
       if instanceName == defaultInstanceName:
         ipsecTunnels = Session.ExecCommand("show vpn-sessiondb summary | i IPsec")
-        numbers = GetRegexGroupMatches(r"\s+ikev\d\sipsec\s+:\s+(\d)", ipsecTunnels, 1)
+        numbers = GetRegexGroupMatches(r"\s?ikev\d\sipsec\s+:\s+(\d)", ipsecTunnels, 1)
         if any(n > 0 for n in numbers):
           self._runningRoutingProtocols[instanceName].Add(NeighborProtocol.IPSEC)
           pass    
@@ -246,73 +246,8 @@ class CiscoASA(L3Discovery.IRouter):
     
   def RegisterNHRP(self, neighborRegistry, instance):
     """Collects NHRP protocol information and registers it with Network Discovery Engine"""
-    # neighborRegistry :The NetworkRegistry object
-    # instance :The Routing instance reference
-    # 
-    # Sample input for parsing
-    #
-    #GigabitEthernet0/0/1 - Group 44
-    #  State is Active
-    #	  5 state changes, last state change 4w4d
-    #  Virtual IP address is 10.81.0.1
-    #  Active virtual MAC address is 0000.0c07.ac2c(MAC In Use)
-    #	  Local virtual MAC address is 0000.0c07.ac2c(v1 default)
-    #  Hello time 1 sec, hold time 3 sec
-    #	  Next hello sent in 0.256 secs
-    #  Authentication text, string "ROWVA252"
-    #  Preemption enabled, delay min 60 secs
-    #  Active router is local
-    #  Standby router is 10.81.0.3, priority 100 (expires in 3.040 sec)
-    #  Priority 105 (configured 105)
-    #			Track object 1 state Up decrement 10
-    #  Group name is "hsrp-Gi0/0/1-44" (default)
-    VIPAddress = ""
-    GroupID = ""
-    PeerAddress = ""
-    isActive = False
-    ri = None
-    hsrpSummary = Session.ExecCommand("show standby")
-    for thisLine in hsrpSummary.splitlines():
-      try:
-        indentLevel = len(thisLine) - len(thisLine.lstrip(' '))
-        if indentLevel == 0:
-          # interface definition is changing
-          if GroupID  and VIPAddress :
-            neighborRegistry.RegisterNHRPPeer(self, instance, ri, L3Discovery.NHRPProtocol.HSRP, isActive, VIPAddress, GroupID, PeerAddress)
-            VIPAddress = ""
-            GroupID = ""
-            PeerAddress = ""
-            ri = None
-          # -- 
-          words = filter(None, thisLine.split(" "))
-          if len(words) >= 3 :
-            ifName = words[0]
-            ri = self.GetInterfaceByName(ifName, instance)
-            match = re.findall(r"(?<=Group )\d{0,99}", thisLine, re.IGNORECASE)
-            if len(match) == 1 :  GroupID = words[2]
-          continue
-        if ri :
-          l = thisLine.lower().lstrip()
-          if l.startswith("virtual ip address is") :
-            match = re.findall(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", l, re.IGNORECASE)
-            if len(match) == 1 : VIPAddress = match[0]
-            continue
-          if l.startswith("active router is local") :
-            isActive = True
-            continue
-          if l.startswith("standby router is") :
-            match = re.findall(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", l, re.IGNORECASE)
-            if len(match) == 1 : PeerAddress = match[0]
-            continue
-      except Exception as Ex:
-        message = "CiscoASA Router Module Error : could not parse NHRP information <{0}> because : {1} ".format(thisLine, str(Ex))
-        DebugEx.WriteLine(message)
-        
-    # -- register the last one
-    if ri and VIPAddress and GroupID :
-      neighborRegistry.RegisterNHRPPeer(self, instance, ri, L3Discovery.NHRPProtocol.HSRP, isActive, VIPAddress, GroupID, PeerAddress)    
-  
-    
+    # ASA does not support HSRP or VRRP
+    pass
   
   def Reset(self):
     """Resets all instance variables to its default value"""

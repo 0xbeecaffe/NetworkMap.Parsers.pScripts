@@ -19,8 +19,8 @@ import L3Discovery
 import PGT.Common
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
-# last changed : 2019.03.20
-scriptVersion = "5.1.0"
+# last changed : 2019.08.13
+scriptVersion = "5.4.0"
 moduleName = "JunOS LLDP Parser"
 class JunOS_LLDP(L3Discovery.IGenericProtocolParser):
   def __init__(self):
@@ -188,6 +188,10 @@ class JunOS_LLDP(L3Discovery.IGenericProtocolParser):
   def GetSupportedProtocols(self):
     """Returns the list of neighbor protocols supported by this parser"""
     return self.ParsingForProtocols
+    
+  def GetVendor(self):
+    """Must return a string matching the Vendor name this parser is responible for"""
+    return self.ParsingForVendor    
     
   def ProtocolDependentParser(self, protocol):
     """Can return an specific routing protocol parser responsible for handling that particular protocol's functionality"""

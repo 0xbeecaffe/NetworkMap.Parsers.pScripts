@@ -19,8 +19,8 @@ import L3Discovery
 import PGT.Common
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
-# last changed : 2019.07.24
-scriptVersion = "5.3.0"
+# last changed : 2019.08.11
+scriptVersion = "5.4.2"
 class JunOS(L3Discovery.IRouter):
   # Beyond _maxRouteTableEntries only the default route will be queried
   _maxRouteTableEntries = 30000    
@@ -47,13 +47,14 @@ class JunOS(L3Discovery.IRouter):
     self._ModelNumber = None
     # The SystemSerial calculated from Inventory
     self._SystemSerial = None 
+    # MAC addresses associated with chassis
+    self._SystemMACs = None
     # Describes the current operation
     self._operationStatusLabel = "Idle"
     # The RouterIDCalculator object
     self._ridCalculator = RouterIDCalculator(self)
     # The InterfaceParser object
     self._interfaceParser = InterfaceParser()
-    
       
   def GetHostName(self):
     """ Returns the host bane as a string"""
@@ -88,7 +89,7 @@ class JunOS(L3Discovery.IRouter):
     if not self._ModelNumber :
       if self._deviceType == DeviceType.Unknown :
         self.GetDeviceType()      
-      inv = self.GetInventory()        
+      inv = self.GetInventory()
       mn  = ""
       if self._deviceType == DeviceType.Firewall :
         allChassis = re.findall(r"Chassis\s.*", inv)
@@ -168,6 +169,16 @@ class JunOS(L3Discovery.IRouter):
           ss += (";" + words[5])
         self._SystemSerial = ss.strip(";")
     return self._SystemSerial
+   
+  def GetSystemMAC(self, instance):
+    """Returns the MAC addresses associated with the local system for the given routing instance"""
+    if not self._SystemMACs or len(self._SystemMACs) == 0:
+      self._SystemMACs = []
+    macs = Session.ExecCommand("show chassis mac-addresses")
+    rep_MAC = r"[0-9a-f]+:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+"
+    f_MACs = re.findall(rep_MAC, macs)
+    sMACSs = ",".join(f_MACs)
+    return sMACSs
     
   def GetDeviceType(self):
     """Returns Type string that can be Switch, Router or Firewall, depending on Model"""
@@ -383,7 +394,7 @@ class JunOS(L3Discovery.IRouter):
           cmd = "show route instance operational logical-system {0} | match {1}".format(logicalSystemName, vrfTag)               
         # execute command and parse result
         cmdResult = Session.ExecCommand(cmd)
-        instanceNames = c = map(lambda e: e.strip("{0} ".format(vrfTag)), filter(lambda e: not e.startswith("{master"), cmdResult.splitlines()))
+        instanceNames = filter(None, map(lambda e: e.strip("{0} ".format(vrfTag)), filter(lambda e: not e.startswith("{master"), cmdResult.splitlines())))
         # Add all other instances
         for thisInstanceName in instanceNames:
           thisInstance = L3Discovery.RoutingInstance()
@@ -745,6 +756,8 @@ class InterfaceParser():
     # Parse the result and fill up self.Interfaces list
     for line in interfaces:  
       words = filter(None, line.split(" "))
+      if len(words) == 0 : continue
+      # --
       ifName = words[0]
       intfLun = re.findall(r"\.\d+$", ifName)
       if self.IsInterrestingInterface(ifName):

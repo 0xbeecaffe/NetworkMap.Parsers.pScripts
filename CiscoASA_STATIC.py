@@ -134,6 +134,10 @@ class CiscoASA_STATIC(L3Discovery.IGenericProtocolParser):
     """Returns the list of neighbor protocols supported by this parser"""
     return self.ParsingForProtocols
     
+  def GetVendor(self):
+    """Must return a string matching the Vendor name this parser is responible for"""
+    return self.ParsingForVendor      
+    
   def ProtocolDependentParser(self, protocol):
     """Can return an specific routing protocol parser responsible for handling that particular protocol's functionality"""
     return None

@@ -22,8 +22,8 @@ from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
 from L3Discovery import NeighborProtocol
 from PGT.Common import IPOperations
-# last changed : 2019.08.03
-scriptVersion = "0.3"
+# last changed : 2019.08.07
+scriptVersion = "1.0"
 class HirshmannSwitch(L3Discovery.IRouter):
   # Beyond _maxRouteTableEntries only the default route will be queried
   _maxRouteTableEntries = 10000    
@@ -479,7 +479,7 @@ class InterfaceParser():
                 maskLength = str(IPOperations.GetMaskLength(prefixAndMask[1]))
                 ri.MaskLength = maskLength
                 ri.PortMode = L3Discovery.RouterInterfacePortMode.Routed
-          # process interface vlan membetship
+          # process interface vlan membership
           if ri.PortMode != L3Discovery.RouterInterfacePortMode.Routed and ri.Configuration :
             try:
               pvid = ""
@@ -583,26 +583,29 @@ class InterfaceParser():
     self._interfaceConfigurations = {}
     currentIntfName = ""
     currentIntfConfig = []
+    intfConfigBlock = False
     for thisLine in self._running_config.splitlines():
       try:
         words = filter(None, thisLine.split(" "))
-        if thisLine.startswith("interface") and len(words) == 2 :
+        rep_IntfLine = r"(?<=^interface)\s+(\d+\/\d+)"
+        m_intfLine = re.findall(rep_IntfLine, thisLine, re.IGNORECASE)
+        if len(m_intfLine):
           # This should be a new interface definition
-          if currentIntfName != "":
-            # add previous interface
-            self._interfaceConfigurations[currentIntfName] = "\r\n".join(currentIntfConfig)
-          # Clear current configuration
           currentIntfConfig = []
-          currentIntfName = words[1]
-        else:
-          sline = thisLine.strip(' ')
-          if sline != "!" and sline != "exit" :
-           currentIntfConfig.append(sline)
-           
+          currentIntfName = m_intfLine[0].strip()
+          intfConfigBlock = True
+        elif intfConfigBlock :
+          sline = thisLine.strip()
+          if sline and sline != "exit" :
+            currentIntfConfig.append(sline)
+          if sline == "exit" and currentIntfName :
+             # add the interface config
+            self._interfaceConfigurations[currentIntfName] = "\r\n".join(currentIntfConfig)  
+            intfConfigBlock = False         
       except Exception as Ex:
         message = "Hirschmann.InterfaceParser.ParseInterfaceConfigurations() : could not parse an interface configuration for line <{0}>. Error is : {1} ".format(thisLine, str(Ex))
-        DebugEx.WriteLine(message)  
-        
+        DebugEx.WriteLine(message)    
+      
   def ParseVLANDatabase(self):
     """Populates vlanNames and vlanIDs dictionaries by parsing switch vlan database"""
     self._vlanIDs = {}
