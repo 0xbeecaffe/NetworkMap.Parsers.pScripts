@@ -205,6 +205,10 @@ class PaloAlto_VPN(L3Discovery.IGenericProtocolParser):
   def GetSupportTag(self):
     """Must return a string that describes the function of this protocol parser, like supported model, platform, version, protocol, etc..."""
     return "{0} v{1}".format(moduleName, scriptVersion)
+    
+  def GetVendor(self):
+    """Must return a string matching the Vendor name this parser is responible for"""
+    return self.ParsingForVendor        
   
   def GetSupportedProtocols(self):
     """Returns the list of neighbor protocols supported by this parser"""
