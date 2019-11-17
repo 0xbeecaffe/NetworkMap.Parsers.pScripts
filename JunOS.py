@@ -19,8 +19,8 @@ import L3Discovery
 import PGT.Common
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
-# last changed : 2019.08.11
-scriptVersion = "5.4.2"
+# last changed : 2019.10.15
+scriptVersion = "6.0.1"
 class JunOS(L3Discovery.IRouter):
   # Beyond _maxRouteTableEntries only the default route will be queried
   _maxRouteTableEntries = 30000    
@@ -47,14 +47,13 @@ class JunOS(L3Discovery.IRouter):
     self._ModelNumber = None
     # The SystemSerial calculated from Inventory
     self._SystemSerial = None 
-    # MAC addresses associated with chassis
-    self._SystemMACs = None
     # Describes the current operation
     self._operationStatusLabel = "Idle"
     # The RouterIDCalculator object
     self._ridCalculator = RouterIDCalculator(self)
     # The InterfaceParser object
     self._interfaceParser = InterfaceParser()
+    
       
   def GetHostName(self):
     """ Returns the host bane as a string"""
@@ -89,7 +88,7 @@ class JunOS(L3Discovery.IRouter):
     if not self._ModelNumber :
       if self._deviceType == DeviceType.Unknown :
         self.GetDeviceType()      
-      inv = self.GetInventory()
+      inv = self.GetInventory()        
       mn  = ""
       if self._deviceType == DeviceType.Firewall :
         allChassis = re.findall(r"Chassis\s.*", inv)
@@ -169,16 +168,6 @@ class JunOS(L3Discovery.IRouter):
           ss += (";" + words[5])
         self._SystemSerial = ss.strip(";")
     return self._SystemSerial
-   
-  def GetSystemMAC(self, instance):
-    """Returns the MAC addresses associated with the local system for the given routing instance"""
-    if not self._SystemMACs or len(self._SystemMACs) == 0:
-      self._SystemMACs = []
-    macs = Session.ExecCommand("show chassis mac-addresses")
-    rep_MAC = r"[0-9a-f]+:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+"
-    f_MACs = re.findall(rep_MAC, macs)
-    sMACSs = ",".join(f_MACs)
-    return sMACSs
     
   def GetDeviceType(self):
     """Returns Type string that can be Switch, Router or Firewall, depending on Model"""
@@ -203,7 +192,23 @@ class JunOS(L3Discovery.IRouter):
     elif self._deviceType == DeviceType.Switch :
       return "Switch" 
     else : 
-      return "Unknown"    
+      return "Unknown"  
+        
+  def GetSystemMAC(self, instance):
+    """Returns the MAC addresses associated with the local system for the given routing instance"""
+    systemMAC = ""
+    # System MAC address is only supported for default (master) routing instance
+    if instance.Name == instance.DefaultInstanceName(self.GetVendor()):
+      repMACAddress = re.compile(r"[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}", re.IGNORECASE)
+      try:
+        macs = Session.ExecCommand("show chassis mac-addresses")
+        foundMACS = repMACAddress.findall(macs)
+        if len(foundMACS) > 0 : 
+          systemMAC = ",".join(foundMACS)
+      except Exception as Ex:
+        DebugEx.WriteLine("JunOS.GetSystemMAC() : unexpected error : {0}".format(str(Ex)))
+    return systemMAC
+      
     
   def GetVendor(self):
     """Must return a string matching the Vendor name this parser is responible for"""
@@ -289,6 +294,13 @@ class JunOS(L3Discovery.IRouter):
     """Return a boolean value indicating whether the current instance is capable of handling the device connected in session"""
     # Session global variable will always contain the actual session, therefore we don't need to
     # keep a referecnce to the session vsariable passed over here
+    # ---
+    # NDE will force entering privileged mode for devices not in FavHost database, so we must switch back to normal exec mode
+    if session.InPrivilegedMode : 
+      currentLine = Session.GetCurrentTerminalLine().strip()
+      if currentLine.endswith("%") :
+        session.ExecCommand("exit")
+    # ---
     if not self._versionInfo : self._versionInfo = Session.ExecCommand("show version")
     return "junos" in self._versionInfo.lower()
     
@@ -756,8 +768,8 @@ class InterfaceParser():
     # Parse the result and fill up self.Interfaces list
     for line in interfaces:  
       words = filter(None, line.split(" "))
-      if len(words) == 0 : continue
-      # --
+      if len(words) == 0 : 
+        continue
       ifName = words[0]
       intfLun = re.findall(r"\.\d+$", ifName)
       if self.IsInterrestingInterface(ifName):

@@ -141,14 +141,14 @@ class DLinkSwitch_LLDP(L3Discovery.IGenericProtocolParser):
   def GetSupportTag(self):
     """Must return a string that describes the function of this protocol parser, like supported model, platform, version, protocol, etc..."""
     return "{0} v{1}".format(moduleName, scriptVersion)
+    
+  def GetVendor(self):
+    """Must return a string matching the Vendor name this parser is responible for"""
+    return self.ParsingForVendor
   
   def GetSupportedProtocols(self):
     """Returns the list of neighbor protocols supported by this parser"""
     return self.ParsingForProtocols
-    
-  def GetVendor(self):
-    """Must return a string matching the Vendor name this parser is responible for"""
-    return self.ParsingForVendor      
     
   def ProtocolDependentParser(self, protocol):
     """Can return an specific routing protocol parser responsible for handling that particular protocol's functionality"""

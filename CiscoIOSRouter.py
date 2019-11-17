@@ -21,8 +21,8 @@ import re
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
 from L3Discovery import NeighborProtocol
-# last changed : 2019.04.09
-scriptVersion = "5.2.0"
+# last changed : 2019.11.17
+scriptVersion = "5.3.0"
 class CiscoIOSRouter(L3Discovery.IRouter):
   # Beyond _maxRouteTableEntries only the default route will be queried
   _maxRouteTableEntries = 30000    
@@ -116,7 +116,29 @@ class CiscoIOSRouter(L3Discovery.IRouter):
     """Returns the regex pattern covering supported Discovery Engine versions"""
     global scriptVersion
     return r"^7\.5.*"    
-    
+
+  def GetSystemMAC(self, instance):
+    """Returns the CSV list of MAC addresses associated with the local system for the given routing instance"""
+    # For ASA, we skip the instance. Cotexts are not yet supported by this parser
+    systemMACs = []
+    v = self.GetVersion()
+    # MAC address on Cisco is normally formatted like b08b.cff7.3600
+    rep_systemMACs = r"(?!0000)[a-f,0-9]{4}\.[a-f,0-9]{4}\.[a-f,0-9]{4}"
+    try:
+      ri_systemMACs = re.finditer(rep_systemMACs, v, re.MULTILINE | re.IGNORECASE)
+      for index, match in enumerate(ri_systemMACs):
+        systemMACs.append(match.group())
+      if len(systemMACs) == 0 :
+        # Sometimes MAC is reported in different format, like b0:8b:cf:f7:36:00
+        rep_systemMACs = r"[a-f,0-9]{2}\:[a-f,0-9]{2}\:[a-f,0-9]{2}\:[a-f,0-9]{2}\:[a-f,0-9]{2}\:[a-f,0-9]{2}"
+        ri_systemMACs = re.finditer(rep_systemMACs, v, re.MULTILINE | re.IGNORECASE)
+        for index, match in enumerate(ri_systemMACs):
+          systemMACs.append(match.group())
+    except Exception as Ex:
+      DebugEx.WriteLine("CiscoIOSRouter.GetSystemMAC() : unexpected error : {0}".format(str(Ex)))
+      
+    return ",".join(systemMACs)
+        
   def GetSystemSerial(self):
     """Returns System serial numbers as a string, calculated from Inventory"""
     if not self._SystemSerial :

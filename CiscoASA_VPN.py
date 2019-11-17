@@ -19,8 +19,8 @@ import L3Discovery
 import PGT.Common
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
-# last changed : 2019.07.26
-scriptVersion = "0.1"
+# last changed : 2019.11.05
+scriptVersion = "0.3"
 moduleName = "Cisco ASA VPN Parser"
 class CiscoASA_VPN(L3Discovery.IGenericProtocolParser):
   def __init__(self):
@@ -62,9 +62,10 @@ class CiscoASA_VPN(L3Discovery.IGenericProtocolParser):
     #
     # Compiled regex search patters
     rep_ConnectionIndex = r"^Index\s+:\s(\d+)"
-    rep_ConnectionAddress = r"^Connection\s+:\s(\S+)"
-    rep_Encryption = r"^Encryption\s+:\s(\S+)"
-    rep_Hashing = r"^Hashing\s+:\s(\S+)"
+    rep_ConnectionAddress = r"^Connection\s+:\s(.*)"
+    rep_Encryption = r"^Encryption\s+:\s(.*)"
+    rep_Hashing = r"^Hashing\s+:\s(.*)"
+    rep_EncHash = r"^Encryption\s+:\s(.+)Hashing\s+:\s(.+)"
     # rep_IPSecBlocks = r"IPsec:.*\s*(?:(?:(?!^IPsec:)[\s\S])*)"
     rep_LocalAddr = r"Local Addr\s+:\s((?:\d{1,3}.){3}\d{1,3}/(?:\d{1,3}.){3}\d{1,3})"
     rep_RemoteAddr = r"Remote Addr\s+:\s((?:\d{1,3}.){3}\d{1,3}/(?:\d{1,3}.){3}\d{1,3})"
@@ -81,13 +82,16 @@ class CiscoASA_VPN(L3Discovery.IGenericProtocolParser):
           thisConnectionRemoteAddresses = GetRegexGroupMatches(rep_ConnectionAddress, thisConnectionDetails, 1)
           for tunnel_RemoteAddress in thisConnectionRemoteAddresses:
             # get local address for this remote address
-            cmd = "show crypto ipsec sa peer {0} | i local crypto end".format(tunnel_RemoteAddress)
-            ipsecSA = Session.ExecCommand(cmd)
+            thisConnectionIPSEC = Session.ExecCommand("sh crypto ipsec sa | i remote crypto endpt.: {0}".format(tunnel_RemoteAddress)).splitlines()[0]
             # extract the first ip address from result, that will be the local address
-            tunnel_LocalAddress = GetIndexedIPAddressFromLine(ipsecSA, 1)
+            tunnel_LocalAddress = GetIndexedIPAddressFromLine(thisConnectionIPSEC, 1)
             if tunnel_LocalAddress :
-              cipherAlg = GetRegexGroupMatches(rep_Encryption, thisConnectionDetails, 1)[0]
-              hashAlg = GetRegexGroupMatches(rep_Hashing, thisConnectionDetails, 1)[0]
+              cipherAlgs = GetRegexGroupMatches(rep_EncHash, thisConnectionDetails, 1)
+              if len(cipherAlgs) > 0 : cipherAlg = cipherAlgs[0]
+              else : cipherAlg = "n/a"
+              hashAlgs = GetRegexGroupMatches(rep_EncHash, thisConnectionDetails, 2)
+              if len(hashAlgs) > 0 : hashAlg = hashAlgs[0]
+              else : hashAlg = "n/a"
               # get local / remote networks for each ipsec tunnel
               localProxies = GetRegexGroupMatches(rep_LocalAddr, thisConnectionDetails, 1)
               remoteProxies = GetRegexGroupMatches(rep_RemoteAddr, thisConnectionDetails, 1)
@@ -110,13 +114,12 @@ class CiscoASA_VPN(L3Discovery.IGenericProtocolParser):
               #/// <param name="cipher">Optional : the cipher algorithm used by the tunnel</param>
               #/// <param name="hash">Optional : the hashing algorithm used by the tunnel</param>
               #/// <param name="tag">Optional : any data to include. Max length is 1024 characters</param>              
-              nRegistry.RegisterTunnel(self.Router, instance, L3Discovery.NeighborProtocol.IPSEC, L3Discovery.LinkType.P2P, None, L3Discovery.NeighborState.Established, tunnel_LocalAddress.strip(), tunnel_RemoteAddress.strip(), None, None, s_localProxies, s_remoteProxies, cipherAlg, hashAlg, None) 
+              nRegistry.RegisterTunnel(self.Router, instance, L3Discovery.NeighborProtocol.IPSEC, L3Discovery.LinkType.P2P, None, L3Discovery.NeighborState.Established , tunnel_LocalAddress.strip(), tunnel_RemoteAddress.strip(), None, None, s_localProxies, s_remoteProxies, cipherAlg, hashAlg, None) 
         except Exception as Ex:
-          message = "CiscoASA_VPN.Parse() : could not parse vpn-sessiondb information because : {0} ".format(str(Ex))
-          DebugEx.WriteLine(message)
+          pass
         
     except Exception as Ex:
-      message = "CiscoASA_VPN.Parse() : could not parse vpn-sessiondb information because : {0} ".format(str(Ex))
+      message = "CiscoASA Router Module Error : could not parse vpn-sessiondb information because : {1} ".format(str(Ex))
       DebugEx.WriteLine(message)
         
   
@@ -127,14 +130,14 @@ class CiscoASA_VPN(L3Discovery.IGenericProtocolParser):
   def GetSupportTag(self):
     """Must return a string that describes the function of this protocol parser, like supported model, platform, version, protocol, etc..."""
     return "{0} v{1}".format(moduleName, scriptVersion)
+    
+  def GetVendor(self):
+    """Must return a string matching the Vendor name this parser is responible for"""
+    return self.ParsingForVendor  
   
   def GetSupportedProtocols(self):
     """Returns the list of neighbor protocols supported by this parser"""
     return self.ParsingForProtocols
-    
-  def GetVendor(self):
-    """Must return a string matching the Vendor name this parser is responible for"""
-    return self.ParsingForVendor      
     
   def ProtocolDependentParser(self, protocol):
     """Can return an specific routing protocol parser responsible for handling that particular protocol's functionality"""

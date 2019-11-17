@@ -19,8 +19,8 @@ import L3Discovery
 import PGT.Common
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
-# last changed : 2019.08.13
-scriptVersion = "5.4.0"
+# last changed : 2019.09.18
+scriptVersion = "6.0.0"
 moduleName = "JunOS LLDP Parser"
 class JunOS_LLDP(L3Discovery.IGenericProtocolParser):
   def __init__(self):
@@ -68,11 +68,13 @@ class JunOS_LLDP(L3Discovery.IGenericProtocolParser):
     repPortID = re.compile(r"(Port ID\s+:)(.*)", re.IGNORECASE)
     repPortDescription = re.compile(r"(Port description\s+:)(.*)", re.IGNORECASE)
     repManagementAddress = re.compile(r"(Address\s+:)(.*)", re.IGNORECASE)
+    repLLDPNeighborBlock = re.compile(r"LLDP Neighbor Information.*\s*((?:(?!^LLDP Neighbor Information)[\s\S])*)", re.IGNORECASE | re.MULTILINE)
     repMACAddress = re.compile(r"[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}", re.IGNORECASE)
     unknownSystemName = "Unknown system"
     unknownChassisType = "Unknown chassis type"
     unknownChassisID = "Unknown chassis id"
-    lldpNeighbors = Session.ExecCommand("show lldp neighbors")
+    # Query all LLDP neighbors
+    lldpNeighbors = Session.ExecCommand("show lldp neighbors")   
     # Output is like below:
     # Local Interface    Parent Interface    Chassis Id          Port info          System Name
     # ge-1/0/6           -                   a4:1f:72:cf:bf:04   a4:1f:72:cf:bf:04
@@ -105,73 +107,76 @@ class JunOS_LLDP(L3Discovery.IGenericProtocolParser):
               remoteNeighboringIP = ""
               # Query LLDP details for this interface
               lldpDetails = Session.ExecCommand("show lldp neighbors interface {0}".format(localIntfName))
-              #-- Local Port ID - The SNMP index of the local interface (used to match remote)
-              x = repLocalPortID.findall(lldpDetails)
-              localPortID = (x[0][1]).strip()  
-              ri.SNMPIndex = localPortID
-              # Build NeighborInformationBlock          
-              niBlock = False
-              niBlockText = []
-              niText = ""
-              for detailLine in lldpDetails.splitlines():         
-                if detailLine.lower().startswith("neighbour information") :
-                  niBlock = True
-                  continue
-                elif niBlock:
-                  # Empty line makrs the end of block
-                  if len(detailLine.strip()) == 0 : break
-                  niBlockText.append(detailLine)
-              if len(niBlockText) > 0 : niText = "\r\n".join(niBlockText)          
-              # Search for interesting information in niText
-              #-- SystemName - Optional field in LLDP 
-              x = repSystemName.findall(niText)
-              if len(x) > 0 : remoteSystemName = (x[0][1]).strip()
-              else : remoteSystemName = unknownSystemName
-              # -- ChassisID - Mandatory field in LLDP, but VMWare vSwitch does not send this, so be careful
-              x = repChassisID.findall(niText)
-              if len(x) > 0 : 
-                remoteChassisID = (x[0][1]).strip()
-              else : remoteChassisID = unknownChassisID
-              #-- PortID - Mandatory field in LLDP
-              x = repPortID.findall(niText)
-              remoteIntfName = (x[0][1]).strip()             
-              #-- ChassisType - Optional field in LLDP 
-              x = repChassisType.findall(niText)
-              if len(x) > 0 : 
-                chassisType = (x[0][1]).strip()
-                if remoteSystemName == unknownSystemName and chassisType.lower() == "mac address" :
-                  # Use remoteChassisID as a unique ID
-                  if ri.Description : remoteSystemName = ri.Description
-                  else : remoteSystemName = remoteChassisID  
-                elif chassisType.lower() == "interface name" :
-                  remoteChassisID = remoteSystemName
-                elif chassisType.lower() == "network address" :
-                  remoteChassisID = remoteSystemName
+              # Break output to bolcks of "LLDP Neighbor Information"
+              neighborBlocks = repLLDPNeighborBlock.findall(lldpDetails)
+              for thisNeighborBlock in neighborBlocks:
+                #-- Local Port ID - The SNMP index of the local interface (used to match remote)
+                x = repLocalPortID.findall(thisNeighborBlock)
+                localPortID = (x[0][1]).strip()  
+                ri.SNMPIndex = localPortID
+                # Build NeighborInformationBlock          
+                niBlock = False
+                niBlockText = []
+                niText = ""
+                for detailLine in thisNeighborBlock.splitlines():         
+                  if detailLine.lower().startswith("neighbour information") :
+                    niBlock = True
+                    continue
+                  elif niBlock:
+                    # Empty line makrs the end of block
+                    if len(detailLine.strip()) == 0 : break
+                    niBlockText.append(detailLine)
+                if len(niBlockText) > 0 : niText = "\r\n".join(niBlockText)          
+                # Search for interesting information in niText
+                #-- SystemName - Optional field in LLDP 
+                x = repSystemName.findall(niText)
+                if len(x) > 0 : remoteSystemName = (x[0][1]).strip()
+                else : remoteSystemName = unknownSystemName
+                # -- ChassisID - Mandatory field in LLDP, but VMWare vSwitch does not send this, so be careful
+                x = repChassisID.findall(niText)
+                if len(x) > 0 : 
+                  remoteChassisID = (x[0][1]).strip()
+                else : remoteChassisID = unknownChassisID
+                #-- PortID - Mandatory field in LLDP
+                x = repPortID.findall(niText)
+                remoteIntfName = (x[0][1]).strip()             
+                #-- ChassisType - Optional field in LLDP 
+                x = repChassisType.findall(niText)
+                if len(x) > 0 : 
+                  chassisType = (x[0][1]).strip()
+                  if remoteSystemName == unknownSystemName and chassisType.lower() == "mac address" :
+                    # Use remoteChassisID as a unique ID
+                    if ri.Description : remoteSystemName = ri.Description
+                    else : remoteSystemName = remoteChassisID  
+                  elif chassisType.lower() == "interface name" :
+                    remoteChassisID = remoteSystemName
+                  elif chassisType.lower() == "network address" :
+                    remoteChassisID = remoteSystemName
+                    
+                else : chassisType = unknownChassisType
+                # Find management address if present
+                managementBlock = False
+                managementBlockText = []
+                managementText = ""
+                lineIndentLevel = -1
+                for detailLine in thisNeighborBlock.splitlines():      
+                  if detailLine.lower().startswith("management address") :
+                    managementBlock = True
+                    continue
+                  elif managementBlock:
+                    lineIndentLevel = len(detailLine) - len(detailLine.strip())
+                    if lineIndentLevel > 0 :
+                      managementBlockText.append(detailLine)
+                    pass
+                  if lineIndentLevel == 0 : break 
                   
-              else : chassisType = unknownChassisType
-              # Find management address if present
-              managementBlock = False
-              managementBlockText = []
-              managementText = ""
-              lineIndentLevel = -1
-              for detailLine in lldpDetails.splitlines():      
-                if detailLine.lower().startswith("management address") :
-                  managementBlock = True
-                  continue
-                elif managementBlock:
-                  lineIndentLevel = len(detailLine) - len(detailLine.strip())
-                  if lineIndentLevel > 0 :
-                    managementBlockText.append(detailLine)
-                  pass
-                if lineIndentLevel == 0 : break 
-                
-              if len(managementBlockText) > 0 :
-                managementText = "\r\n".join(managementBlockText)
-                foundIP = repManagementAddress.findall(managementText)
-                if len(foundIP) == 1 :
-                  remoteNeighboringIP = (foundIP[0][1]).strip()
-              # Now we have all the data to register the neighbor
-              nRegistry.RegisterNeighbor(self.Router, instance, L3Discovery.NeighborProtocol.LLDP,  remoteChassisID, "", remoteSystemName, remoteNeighboringIP, ri, "OK", remoteIntfName) 
+                if len(managementBlockText) > 0 :
+                  managementText = "\r\n".join(managementBlockText)
+                  foundIP = repManagementAddress.findall(managementText)
+                  if len(foundIP) == 1 :
+                    remoteNeighboringIP = (foundIP[0][1]).strip()
+                # Now we have all the data to register the neighbor
+                nRegistry.RegisterNeighbor(self.Router, instance, L3Discovery.NeighborProtocol.LLDP,  remoteChassisID, "", remoteSystemName, remoteNeighboringIP, ri, "OK", remoteIntfName) 
             else:
               DebugEx.WriteLine("Router object failed to provide details for interface < {0} >".format(localIntfName), DebugLevel.Warning)
       except Exception as Ex:
@@ -185,13 +190,13 @@ class JunOS_LLDP(L3Discovery.IGenericProtocolParser):
     """Must return a string that describes the function of this protocol parser, like supported model, platform, version, protocol, etc..."""
     return "{0} v{1}".format(moduleName, scriptVersion)
   
+  def GetVendor(self):
+    """Must return a string matching the Vendor name this parser is responible for"""
+    return self.ParsingForVendor
+    
   def GetSupportedProtocols(self):
     """Returns the list of neighbor protocols supported by this parser"""
     return self.ParsingForProtocols
-    
-  def GetVendor(self):
-    """Must return a string matching the Vendor name this parser is responible for"""
-    return self.ParsingForVendor    
     
   def ProtocolDependentParser(self, protocol):
     """Can return an specific routing protocol parser responsible for handling that particular protocol's functionality"""

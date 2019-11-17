@@ -19,8 +19,8 @@ import L3Discovery
 import PGT.Common
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
-# last changed : 2019.03.20
-scriptVersion = "0.1"
+# last changed : 2019.11.04
+scriptVersion = "0.2"
 moduleName = "Hirschmann switch LLDP Parser"
 class HirschmannSwitch_LLDP(L3Discovery.IGenericProtocolParser):
   def __init__(self):
@@ -68,6 +68,8 @@ class HirschmannSwitch_LLDP(L3Discovery.IGenericProtocolParser):
     repNameOfStation = r"^\s+Name of Station\.+\s(.*)"
     # repLocalPortID : regex group 1 : port number, group2 : module number (optional)GetRegexGroupMatchesGetRegexGroupMatches
     repRemotePortID = r"Port ID [^)]+\)\.+\s(?:port-)?([a-f\d:]+)-?(\d+)?"
+    # repRemotePortDescription : regex group 1 : module number, group2 : port number
+    repRemotePortDescription = r"Port Description[\.\s]+Module:\s(\d+)\s+Port:\s(\d+)"
     repManagementAddress = r"Management Address\.+\s([a-f\d:.]+)"
     repMACAddress = re.compile(r"[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}", re.IGNORECASE)
     lldpNeighbors = Session.ExecCommand("show lldp neighbors")
@@ -93,18 +95,33 @@ class HirschmannSwitch_LLDP(L3Discovery.IGenericProtocolParser):
               remoteSystemName = remoteSystemName[0].strip()
             else:
               remoteSystemName = "Unknown System Name"
-            
-          remotePortName = self.GetRegexGroupMatches(repRemotePortID, thisRemoteData, 1)
+                   
+          # First try repRemotePortDescription regex
+          remotePortName = self.GetRegexGroupMatches(repRemotePortDescription, thisRemoteData, 2)
           if remotePortName and remotePortName[0]:
             remotePortName = remotePortName[0].strip()
             if remotePortName.isdigit() : remotePortName = str(int(remotePortName))
-          remotePortModuleName = self.GetRegexGroupMatches(repRemotePortID, thisRemoteData, 2)
-          if remotePortModuleName and remotePortModuleName[0]:
-            remotePortModuleName = remotePortModuleName[0].strip()          
-            if remotePortModuleName.isdigit() : remotePortModuleName = str(int(remotePortModuleName))
-            remoteIntfName = "{0}/{1}".format(remotePortModuleName, remotePortName)
+            remotePortModuleName = self.GetRegexGroupMatches(repRemotePortDescription, thisRemoteData, 1)
+            if remotePortModuleName and remotePortModuleName[0]:
+              remotePortModuleName = remotePortModuleName[0].strip()          
+              if remotePortModuleName.isdigit() : remotePortModuleName = str(int(remotePortModuleName))
+              remoteIntfName = "{0}/{1}".format(remotePortModuleName, remotePortName)
+            else:
+              remoteIntfName  = remotePortName
           else:
-            remoteIntfName  = remotePortName
+            # repRemotePortDescription failed, so let's try repRemotePortID
+            remotePortName = self.GetRegexGroupMatches(repRemotePortID, thisRemoteData, 1)
+            if remotePortName and remotePortName[0]:
+              remotePortName = remotePortName[0].strip()
+              if remotePortName.isdigit() : remotePortName = str(int(remotePortName))
+              remotePortModuleName = self.GetRegexGroupMatches(repRemotePortID, thisRemoteData, 2)
+              if remotePortModuleName and remotePortModuleName[0]:
+                remotePortModuleName = remotePortModuleName[0].strip()          
+                if remotePortModuleName.isdigit() : remotePortModuleName = str(int(remotePortModuleName))
+                remoteIntfName = "{0}/{1}".format(remotePortModuleName, remotePortName)
+              else:
+                remoteIntfName  = remotePortName            
+            
           remoteNeighboringIP = self.GetRegexGroupMatches(repManagementAddress, thisRemoteData, 1)
           if remoteNeighboringIP and remoteNeighboringIP[0] : remoteNeighboringIP = remoteNeighboringIP[0].strip()
           else : remoteNeighboringIP = ""
@@ -123,14 +140,14 @@ class HirschmannSwitch_LLDP(L3Discovery.IGenericProtocolParser):
   def GetSupportTag(self):
     """Must return a string that describes the function of this protocol parser, like supported model, platform, version, protocol, etc..."""
     return "{0} v{1}".format(moduleName, scriptVersion)
+    
+  def GetVendor(self):
+    """Must return a string matching the Vendor name this parser is responible for"""
+    return self.ParsingForVendor  
   
   def GetSupportedProtocols(self):
     """Returns the list of neighbor protocols supported by this parser"""
     return self.ParsingForProtocols
-    
-  def GetVendor(self):
-    """Must return a string matching the Vendor name this parser is responible for"""
-    return self.ParsingForVendor      
     
   def ProtocolDependentParser(self, protocol):
     """Can return an specific routing protocol parser responsible for handling that particular protocol's functionality"""

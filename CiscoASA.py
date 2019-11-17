@@ -22,8 +22,8 @@ from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
 from L3Discovery import NeighborProtocol
 from PGT.Common import IPOperations
-# last changed : 2019.08.03
-scriptVersion = "0.4"
+# last changed : 2019.11.17
+scriptVersion = "6.0.1"
 class CiscoASA(L3Discovery.IRouter):
   # Beyond _maxRouteTableEntries only the default route will be queried
   _maxRouteTableEntries = 10000    
@@ -125,6 +125,7 @@ class CiscoASA(L3Discovery.IRouter):
       if len(SNs) > 0 :
         self._SystemSerial = SNs[0]
     return self._SystemSerial
+    
   def GetSystemMAC(self, instance):
     """Returns the CSV list of MAC addresses associated with the local system for the given routing instance"""
     # For ASA, we skip the instance. Cotexts are not yet supported by this parser
@@ -438,7 +439,7 @@ class CiscoASA(L3Discovery.IRouter):
             rte = L3Discovery.RouteTableEntry()
             rte.RouterID = self.RouterID(thisProtocol, instance)
             rte.Prefix = prefix
-            rte.MaskLength = str(maskLength)
+            rte.MaskLength = maskLength
             rte.Protocol = str(thisProtocol)
             rte.AD = adminDistance
             rte.Metric = routeMetric
@@ -619,10 +620,13 @@ class InterfaceParser():
       self.Interfaces[instanceName] = [] 
     # Query the device interfaces
     interfaces = Session.ExecCommand("show interface summary").splitlines()
+    # Add a dummy line at the end, required for below processing only
+    interfaces.append("--end--")
     # Parse the result and fill up self.Interfaces list
     ri = L3Discovery.RouterInterface()
     lineCount = len(interfaces)
     currentLineIndex = 1
+    rep_MAC = r"(?!0000)[a-f,0-9]{4}\.[a-f,0-9]{4}\.[a-f,0-9]{4}"
     for line in interfaces:
       try:  
         if line.lower().startswith("interface") or currentLineIndex == lineCount :
@@ -651,14 +655,25 @@ class InterfaceParser():
             ri.Name = interfaceName
             status = [i.strip(',') for i in words if "up" in i.lower() or "down" in i.lower()]
             ri.Status = ",".join(status)
+          else:
+            ri = None
         else:
-          # this line belongs to an iterface information block
-          sline = line.strip().lower()
-          if sline.startswith("ip address"):
-            addressAndMask = GetIPAddressAndSubnetMaskFromLine(sline)
-            if len(addressAndMask) == 2:
-              ri.Address = addressAndMask[0]
-              ri.MaskLength = str(IPOperations.GetMaskLength(addressAndMask[1]))
+          if ri:
+            # this line belongs to an iterface information block
+            sline = line.strip().lower()
+            if sline.startswith("ip address"):
+              addressAndMask = GetIPAddressAndSubnetMaskFromLine(sline)
+              if len(addressAndMask) == 2:
+                ri.Address = addressAndMask[0]
+                ri.MaskLength = str(IPOperations.GetMaskLength(addressAndMask[1]))
+            if sline.startswith("mac address"):
+              mac = re.findall(rep_MAC, sline)
+              if len(mac) == 1:
+                ri.MAC = mac[0]
+            if "member of port-channel" in sline:
+              lagID = re.findall(r"\d+$", sline)
+              if len(lagID) == 1:
+                ri.AggregateID = lagID[0]              
         
         # PortMode and VLANS will be processed later in a second pass
       except Exception as Ex:
@@ -776,7 +791,9 @@ class InterfaceParser():
     self._nameIfs = {}
     currentIntfName = ""
     currentIntfConfig = []
-    for thisLine in self._running_config.splitlines():
+    runningConfigLines = self._running_config.splitlines()
+    lineIndex = 0
+    for thisLine in runningConfigLines:
       try:
         words = thisLine.split(" ")
         if thisLine.startswith("interface") and len(words) == 2 :
@@ -800,12 +817,25 @@ class InterfaceParser():
            
       except Exception as Ex:
         message = "CiscoASA.InterfaceParser.ParseInterfaceConfigurations() : could not parse an interface configuration for line <{0}>. Error is : {1} ".format(thisLine, str(Ex))
-        DebugEx.WriteLine(message)   
+        DebugEx.WriteLine(message)
+      
+      lineIndex += 1  
+      if lineIndex == len(runningConfigLines) and currentIntfName != "":
+          # add last interface
+          self._interfaceConfigurations[currentIntfName] = "\r\n".join(currentIntfConfig)       
            
   def IsInterrestingInterface(self, intfName):
     """ Determines if a given name is an interface name we want to parse"""
     iname = intfName.lower()
-    return iname.startswith("fastethernet") or iname.startswith("gigabitethernet") or iname.startswith("tengigabitethernet") or iname.startswith("ethernet") or iname.startswith("loopback") or iname.startswith("vlan") or iname.startswith("tunnel")
+    return iname.startswith("fastethernet")\
+    or iname.startswith("gigabitethernet")\
+    or iname.startswith("tengigabitethernet")\
+    or iname.startswith("ethernet")\
+    or iname.startswith("loopback")\
+    or iname.startswith("vlan")\
+    or iname.startswith("tunnel")\
+    or (iname.startswith("port-channel") and "." in iname)\
+    or iname.startswith("management")
       
   def Reset(self) :
     self.Interfaces = {}
