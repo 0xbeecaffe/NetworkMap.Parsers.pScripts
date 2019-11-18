@@ -22,8 +22,8 @@ from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
 from L3Discovery import NeighborProtocol
 from PGT.Common import IPOperations
-# last changed : 2019.08.07
-scriptVersion = "1.0"
+# last changed : 2019.11.18
+scriptVersion = "2.0"
 class HirshmannSwitch(L3Discovery.IRouter):
   # Beyond _maxRouteTableEntries only the default route will be queried
   _maxRouteTableEntries = 10000    
@@ -432,9 +432,35 @@ class InterfaceParser():
       if instance : instanceName = instance.Name
       if self.Interfaces.get(instanceName, None) == None:
         self.Interfaces[instanceName] = [] 
+      # get vlan-ip data
+      vlanRoutedInterfaces = Session.ExecCommand("show ip vlan").splitlines()
+      # expected output for vlanRoutedInterfaces :
+      #           Logical                                                       
+      #VLAN ID   Interface     IP Address       Subnet Mask        MAC Address  
+      #-------  -----------  ---------------  ---------------  -----------------
+      #1        9/7          10.0.40.254      255.255.255.0    EC:74:BA:50:0B:49
+      #2        9/1          10.0.41.254      255.255.255.0    EC:74:BA:50:0B:43
+      #3        9/2          10.0.39.254      255.255.255.0    EC:74:BA:50:0B:44
+      #4        9/3          10.0.43.254      255.255.255.0    EC:74:BA:50:0B:45
+      #5        9/4          10.0.38.254      255.255.255.0    EC:74:BA:50:0B:46
+      vlanIPHeaderLine = next((l for l in vlanRoutedInterfaces if l.startswith("----")), None)
+      # vlanHeaderSection will contain column start-end positions
+      vlanIPHeaderSection = []
+      matches = re.finditer(r"-  -", vlanIPHeaderLine)
+      for index, match in enumerate(matches):
+        frompos = match.regs[0][0]
+        topos = match.regs[0][1]
+        #print "{0}:{1}".format(frompos, topos)
+        if index == 0:
+          vlanIPHeaderSection.append([0, frompos + 1])
+        else:
+          vlanIPHeaderSection[index][1] = topos - 2
+        vlanIPHeaderSection.append([topos-1, -1])
+      if len(vlanIPHeaderSection) > 0 : vlanIPHeaderSection[-1][1] = len(vlanIPHeaderLine)      
+      
       # get all interface data
       responseLines = Session.ExecCommand("show port all").splitlines()
-      # expected output :
+      # expected output responseLines :
       #               Admin   Physical   Physical   Link   Link   Cable-Cross   Flow   Device  VLAN
       # Intf   Type    Mode    Mode       Status   Status  Trap   PhysMode Fix  Mode   status  Prio
       #------ ------ ------- ---------- ---------- ------ ------- ------------ ------- ------- ----
@@ -449,7 +475,7 @@ class InterfaceParser():
       for index, match in enumerate(matches):
         frompos = match.regs[0][0]
         topos = match.regs[0][1]
-        print "{0}:{1}".format(frompos, topos)
+        #print "{0}:{1}".format(frompos, topos)
         if index == 0:
           headerSections.append([0, frompos + 1])
         else:
@@ -479,6 +505,18 @@ class InterfaceParser():
                 maskLength = str(IPOperations.GetMaskLength(prefixAndMask[1]))
                 ri.MaskLength = maskLength
                 ri.PortMode = L3Discovery.RouterInterfacePortMode.Routed
+                # try to get which VLAN this interface belongs to, if any
+                for vlanLine in vlanRoutedInterfaces :
+                  vlanIntfName = vlanLine[vlanIPHeaderSection[1][0]:vlanIPHeaderSection[1][1]].strip()
+                  if vlanIntfName == ri.Name :
+                    thisIntfVlanID = vlanLine[vlanIPHeaderSection[0][0]:vlanIPHeaderSection[0][1]].strip()
+                    if thisIntfVlanID.isdigit():
+                      intfVLANinfo = ""
+                      vname = self._vlanNames.get(thisIntfVlanID, "")
+                      if vname : intfVLANinfo = "{0}|{1}".format(vname, thisIntfVlanID)
+                      else : intfVLANinfo = thisIntfVlanID
+                      ri.VLANS = intfVLANinfo
+                    
           # process interface vlan membership
           if ri.PortMode != L3Discovery.RouterInterfacePortMode.Routed and ri.Configuration :
             try:
