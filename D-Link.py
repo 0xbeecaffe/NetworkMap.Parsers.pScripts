@@ -319,9 +319,10 @@ class DLinkSwitch(L3Discovery.IRouter):
       # construct CLI command
       cmd = "show ip vrf"
       # execute command and parse result
-      vrf_lines = Session.ExecCommand(cmd).splitlines()
+      vrfs = Session.ExecCommand(cmd)
+      vrf_lines = vrfs.splitlines()
       failwords = self.ScriptSettings.FailedCommandPattern.split(";")
-      if not any(fw in vrf_lines for fw in failwords) and not ("invalid input" in vrf_lines.lower()):
+      if not any(fw in vrfs for fw in failwords) and not ("invalid input" in vrfs.lower()):
         # first line is column header
         headerLine = vrf_lines.pop(0)
         # expected headers are : Name, Default RD, Protocols, Interfaces
@@ -610,7 +611,7 @@ class DLinkSwitch(L3Discovery.IRouter):
           if thisProtocol != NeighborProtocol.UNKNOWN:
             if parserSuccess:
               try :
-                rte = RouteTableEntry()
+                rte = L3Discovery.RouteTableEntry()
                 rte.RouterID = self.RouterID(thisProtocol, instance)
                 rte.Prefix = prefix
                 rte.MaskLength = maskLength

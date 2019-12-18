@@ -21,8 +21,8 @@ import re
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
 from L3Discovery import NeighborProtocol
-# last changed : 2019.11.17
-scriptVersion = "5.3.0"
+# last changed : 2019.11.23
+scriptVersion = "5.4.0"
 class CiscoIOSRouter(L3Discovery.IRouter):
   # Beyond _maxRouteTableEntries only the default route will be queried
   _maxRouteTableEntries = 30000    
@@ -116,7 +116,6 @@ class CiscoIOSRouter(L3Discovery.IRouter):
     """Returns the regex pattern covering supported Discovery Engine versions"""
     global scriptVersion
     return r"^7\.5.*"    
-
   def GetSystemMAC(self, instance):
     """Returns the CSV list of MAC addresses associated with the local system for the given routing instance"""
     # For ASA, we skip the instance. Cotexts are not yet supported by this parser
@@ -248,6 +247,12 @@ class CiscoIOSRouter(L3Discovery.IRouter):
         cdpEnabled = not ("not enabled" in response)
         if cdpEnabled: 
           self._runningRoutingProtocols[instanceName].Add(NeighborProtocol.CDP)
+          
+        # LLDP - only for default instance
+        response = Session.ExecCommand("show lldp")
+        lldpEnabled = "status: active" in response.lower()
+        if lldpEnabled: 
+          self._runningRoutingProtocols[instanceName].Add(NeighborProtocol.LLDP)          
           
     result =  self._runningRoutingProtocols[instanceName]
     return result
@@ -967,9 +972,14 @@ class InterfaceParser():
     if instance : instanceName = instance.Name
     if self.Interfaces.get(instanceName, None) == None:
       self.Interfaces[instanceName] = [] 
-    # check interface list for this instance
+    # check interface list for this instance using long interface names
+    longIntfName = self.InterfaceNameToLong(ifName).lower()
     if len(self.Interfaces[instanceName]) == 0 : self.ParseInterfaces(instance)
-    foundInterface = next((intf for intf in self.Interfaces[instanceName] if intf.Name.lower().strip() == ifName.lower().strip()), None)
+    foundInterface = next((intf for intf in self.Interfaces[instanceName] if intf.Name.lower().strip() == longIntfName), None)
+    if not foundInterface:
+      # Try with short interface name
+      shortIntfName = self.InterfaceNameToShort(ifName).lower()
+      foundInterface = next((intf for intf in self.Interfaces[instanceName] if intf.Name.lower().strip() == shortIntfName), None)     
     return foundInterface
     
   def GetInterfaceNameByAddress(self, ipAddress, instance):
@@ -1041,7 +1051,14 @@ class InterfaceParser():
            
   def IsInterrestingInterface(self, intfName):
     """ Determines if a given name is an interface name we want to parse"""
-    return intfName.startswith("ge-") or intfName.startswith("xe-") or intfName.startswith("et-") or intfName.startswith("ae") or intfName.startswith("irb") or intfName.startswith("vlan") or intfName.startswith("lo")
+    return intfName.startswith("ge-")\
+      or intfName.startswith("xe-")\
+      or intfName.startswith("et-")\
+      or intfName.startswith("te-")\
+      or intfName.startswith("ae")\
+      or intfName.startswith("irb")\
+      or intfName.startswith("vlan")\
+      or intfName.startswith("lo")
       
   def Reset(self) :
     self.Interfaces = {}
@@ -1055,9 +1072,12 @@ class InterfaceParser():
     if inputName.startswith("fastethernet") : shortName = input.replace("fastethernet", "fa")
     elif inputName.StartsWith("tengigabitethernet") : shortName = input.replace("tengigabitethernet", "te")
     elif inputName.StartsWith("gigabitethernet") : shortName = input.replace("gigabitethernet", "gi")
-    elif inputName.StartsWith("ethernet") : shortName = input.replace("ethernet", "eth")
+    elif inputName.StartsWith("ethernet") : shortName = input.replace("ethernet", "et")
     elif inputName.StartsWith("loopback") : shortName = input.replace("loopback", "lo")
-    return shortName 
+    if shortName: 
+      return shortName 
+    else:
+      return longName
     
   def InterfaceNameToLong(self, shortName):
     """Converts a short Cisco interface name to its long representation"""
@@ -1066,9 +1086,12 @@ class InterfaceParser():
     if inputName.startswith("fa") and inputName.find("fastethernet") < 0 : longName = inputName.replace("fa", "fastethernet")
     elif inputName.startswith("te") and inputName.find("tengigabitethernet") < 0 : longName = inputName.replace("te", "tengigabitethernet")
     elif inputName.startswith("gi") and inputName.find("gigabitethernet") < 0 : longName = inputName.replace("gi", "gigabitethernet")
-    elif inputName.startswith("eth") and inputName.find("ethernet") < 0 :longName = inputName.replace("eth", "ethernet")
+    elif inputName.startswith("et") and inputName.find("ethernet") < 0 :longName = inputName.replace("eth", "ethernet")
     elif inputName.startswith("lo") and inputName.find("loopback") < 0 : longName = inputName.replace("lo", "loopback")
-    return longName;
+    if longName:
+      return longName
+    else:
+      return shortName
     
     
 def GetColumnValue(textLine, headerLine, headerColumn, headerSeparator):

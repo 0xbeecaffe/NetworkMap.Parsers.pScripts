@@ -22,8 +22,13 @@ from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
 from L3Discovery import NeighborProtocol
 from PGT.Common import IPOperations
-# last changed : 2019.11.18
-scriptVersion = "2.0"
+# last changed : 2019.12.18
+scriptVersion = "2.1"
+class HirshmannSwitchType:
+  Unknown = 0
+  MachSwitch = 1
+  RailSwitch = 2
+  
 class HirshmannSwitch(L3Discovery.IRouter):
   # Beyond _maxRouteTableEntries only the default route will be queried
   _maxRouteTableEntries = 10000    
@@ -40,7 +45,7 @@ class HirshmannSwitch(L3Discovery.IRouter):
     # Not supported by IOS, return default only
     self._logicalSystems = ["Default"]
     # The default routing instance name. Set ing Initialize()
-    _defaultRoutingInstanceName = "Default"
+    self._defaultRoutingInstanceName = "Default"
     # The dictionary of RoutingInstances keyed by LogicalSystem name
     self._routingInstances = {}
     # The routing protocols run by this router, dictionary keyed by routing instamce name
@@ -56,8 +61,9 @@ class HirshmannSwitch(L3Discovery.IRouter):
     # The RouterIDCalculator object
     self._ridCalculator = RouterIDCalculator(self)
     # The InterfaceParser object
-    self._interfaceParser = InterfaceParser(self)  
-    
+    self._interfaceParser = InterfaceParser(self) 
+    # Identifies the switch type as MACH or RailSwitch
+    self.SwitchType = HirshmannSwitchType.Unknown     
       
   def GetHostName(self):
     """ Returns the host bane as a string"""
@@ -72,22 +78,37 @@ class HirshmannSwitch(L3Discovery.IRouter):
     
   def GetInventory(self):
     """Returns the device inventory string"""
-    # regex group 1 : Power Supply Information    
-    rep_PSInfo = r"power supply information:([\s\S]+(?=media module information))"
-    # regex group 1 : Media Module Information
-    rep_MMInfo = r"media module information:([\s\S]+(?=sfp information))"
-    # regex group 1 : Media Module Information
-    rep_SFPInfo = r"sfp information[\w\s\S]+:([\s\S]+(?=^CPU))"
-    v = self.GetVersion()
-    inventoryText = "unknown"
-    try:
-      PSInfo = GetRegexGroupMatches(rep_PSInfo, v, 1)[0]
-      MMInfo = GetRegexGroupMatches(rep_MMInfo, v, 1)[0]
-      SFPInfo = GetRegexGroupMatches(rep_SFPInfo, v, 1)[0]
-      inventoryText = "\r\n".join([PSInfo, MMInfo, SFPInfo])
-    except Exception as Ex:
-      DebugEx.WriteLine("HirschmannMACH.GetInventory() : unexpected error : {0}".format(str(Ex)))
-    return inventoryText
+    if self.SwitchType == HirshmannSwitchType.MachSwitch:
+      # regex group 1 : Power Supply Information    
+      rep_PSInfo = r"power supply information:([\s\S]+(?=media module information))"
+      # regex group 1 : Media Module Information
+      rep_MMInfo = r"media module information:([\s\S]+(?=sfp information))"
+      # regex group 1 : Media Module Information
+      rep_SFPInfo = r"sfp information[\w\s\S]+:([\s\S]+(?=^CPU))"
+      v = self.GetVersion()
+      inventoryText = "unknown"
+      try:
+        PSInfo = GetRegexGroupMatches(rep_PSInfo, v, 1)[0]
+        MMInfo = GetRegexGroupMatches(rep_MMInfo, v, 1)[0]
+        SFPInfo = GetRegexGroupMatches(rep_SFPInfo, v, 1)[0]
+        inventoryText = "\r\n".join([PSInfo, MMInfo, SFPInfo])
+      except Exception as Ex:
+        DebugEx.WriteLine("HirschmannMACH.GetInventory() : unexpected error : {0}".format(str(Ex)))
+      return inventoryText
+    elif self.SwitchType == HirshmannSwitchType.RailSwitch:
+      # regex group 1 : Power Supply Information    
+      rep_PSInfo = r"power supply.*"
+      # regex group 1 : Media Module Information
+      rep_MMInfo = r"media module information.*"
+      v = self.GetVersion()
+      inventoryText = "unknown"
+      try:
+        PSInfo = "\r\n".join(re.findall(rep_PSInfo, v, re.IGNORECASE))
+        MMInfo = "\r\n".join(re.findall(rep_MMInfo, v, re.IGNORECASE))
+        inventoryText = "\r\n".join([PSInfo, MMInfo])
+      except Exception as Ex:
+        DebugEx.WriteLine("HirschmannMACH.GetInventory() : unexpected error : {0}".format(str(Ex)))
+      return inventoryText    
     
   def GetLogicalSystemNames(self):
     """ Returns the list of Logical Systems as a string list"""
@@ -108,7 +129,10 @@ class HirshmannSwitch(L3Discovery.IRouter):
     """Returns Model number as a string, calculated from Inventory"""
     if not self._ModelNumber :
       v = self.GetVersion()
-      rep_Backplane = r"Backplane Hardware Description\.+(.*)"
+      if self.SwitchType == HirshmannSwitchType.MachSwitch:
+        rep_Backplane = r"Backplane Hardware Description\.+(.*)"
+      elif self.SwitchType == HirshmannSwitchType.RailSwitch:
+        rep_Backplane = r"Hardware Description\.+(.*)"
       try:
         self._ModelNumber = GetRegexGroupMatches(rep_Backplane, v, 1)[0].strip()
       except Exception as Ex:
@@ -145,12 +169,16 @@ class HirshmannSwitch(L3Discovery.IRouter):
     """Returns System serial numbers as a string, calculated from Inventory"""
     if not self._SystemSerial :
       v = self.GetVersion()
-      rep_BackplaneSerial = r"^Serial Number \(Backplane\)\.+(.*)"
+      if self.SwitchType == HirshmannSwitchType.MachSwitch:
+       rep_BackplaneSerial = r"^Serial Number \(Backplane\)\.+(.*)"
+      elif self.SwitchType == HirshmannSwitchType.RailSwitch :
+        rep_BackplaneSerial = r"^Serial Number\.+(.*)"
       try:
         self._SystemSerial = GetRegexGroupMatches(rep_BackplaneSerial, v, 1)[0].strip()
       except Exception as Ex:
         DebugEx.WriteLine("HirschmannMACH.GetSystemSerial() : unexpected error : {0}".format(str(Ex)))
     return self._SystemSerial
+    
   def GetSystemMAC(self, instance):
     """Returns the MAC addresses associated with the local system for the given routing instance"""
     systemMAC = ""
@@ -256,8 +284,14 @@ class HirshmannSwitch(L3Discovery.IRouter):
     # keep a referecnce to the session vsariable passed over here
     self._defaultRoutingInstanceName = L3Discovery.RoutingInstance.DefaultInstanceName(self.GetVendor())
     v = self.GetVersion()
-    accepted = "hirschmann" in v.lower()
+    
+    if "hirschmann mach" in v.lower() : 
+      self.SwitchType = HirshmannSwitchType.MachSwitch
+    if "hirschmann railswitch" in v.lower() : 
+      self.SwitchType = HirshmannSwitchType.RailSwitch
+    accepted = self.SwitchType != HirshmannSwitchType.Unknown
     if accepted:
+      # We use Session variable because its type is know at design time and code completion works, but session would be the same as Session
       Session.ExecCommand("enable")
     return accepted
     
@@ -323,6 +357,7 @@ class HirshmannSwitch(L3Discovery.IRouter):
     # Not implemented
     return parsedRoutes
       
+
 class RouterIDCalculator():
   """Performs Router ID and AS Number calculations """
   def __init__(self, router):
@@ -331,7 +366,7 @@ class RouterIDCalculator():
     # RouterID is a dictionary in dictionary, outer keyed by RoutingInstance name, inner keyed by RoutingProtocol as a string
     self.RouterID = {}
     # BGPASNumber is a dictionary, keyed by RoutingInstance name
-    self.BGPASNumber = {}  
+    self.BGPASNumber = {}      
     
   def GetRouterID(self, protocol, instance):
     """Return the RouterID for given instance and protocol"""
@@ -431,32 +466,34 @@ class InterfaceParser():
       instanceName = self.Router._defaultRoutingInstanceName
       if instance : instanceName = instance.Name
       if self.Interfaces.get(instanceName, None) == None:
-        self.Interfaces[instanceName] = [] 
-      # get vlan-ip data
-      vlanRoutedInterfaces = Session.ExecCommand("show ip vlan").splitlines()
-      # expected output for vlanRoutedInterfaces :
-      #           Logical                                                       
-      #VLAN ID   Interface     IP Address       Subnet Mask        MAC Address  
-      #-------  -----------  ---------------  ---------------  -----------------
-      #1        9/7          10.0.40.254      255.255.255.0    EC:74:BA:50:0B:49
-      #2        9/1          10.0.41.254      255.255.255.0    EC:74:BA:50:0B:43
-      #3        9/2          10.0.39.254      255.255.255.0    EC:74:BA:50:0B:44
-      #4        9/3          10.0.43.254      255.255.255.0    EC:74:BA:50:0B:45
-      #5        9/4          10.0.38.254      255.255.255.0    EC:74:BA:50:0B:46
-      vlanIPHeaderLine = next((l for l in vlanRoutedInterfaces if l.startswith("----")), None)
-      # vlanHeaderSection will contain column start-end positions
-      vlanIPHeaderSection = []
-      matches = re.finditer(r"-  -", vlanIPHeaderLine)
-      for index, match in enumerate(matches):
-        frompos = match.regs[0][0]
-        topos = match.regs[0][1]
-        #print "{0}:{1}".format(frompos, topos)
-        if index == 0:
-          vlanIPHeaderSection.append([0, frompos + 1])
-        else:
-          vlanIPHeaderSection[index][1] = topos - 2
-        vlanIPHeaderSection.append([topos-1, -1])
-      if len(vlanIPHeaderSection) > 0 : vlanIPHeaderSection[-1][1] = len(vlanIPHeaderLine)      
+        self.Interfaces[instanceName] = []
+      if self.Router.SwitchType == HirshmannSwitchType.MachSwitch: 
+        # get vlan-ip data
+        vlanRoutedInterfaces = Session.ExecCommand("show ip vlan").splitlines()
+        # expected output for vlanRoutedInterfaces :
+        #           Logical                                                       
+        #VLAN ID   Interface     IP Address       Subnet Mask        MAC Address  
+        #-------  -----------  ---------------  ---------------  -----------------
+        #1        9/7          10.0.40.254      255.255.255.0    EC:74:BA:50:0B:49
+        #2        9/1          10.0.41.254      255.255.255.0    EC:74:BA:50:0B:43
+        #3        9/2          10.0.39.254      255.255.255.0    EC:74:BA:50:0B:44
+        #4        9/3          10.0.43.254      255.255.255.0    EC:74:BA:50:0B:45
+        #5        9/4          10.0.38.254      255.255.255.0    EC:74:BA:50:0B:46
+        vlanIPHeaderLine = next((l for l in vlanRoutedInterfaces if l.startswith("----")), None)
+        # vlanHeaderSection will contain column start-end positions
+        vlanIPHeaderSection = []
+        if vlanIPHeaderLine : 
+          matches = re.finditer(r"-  -", vlanIPHeaderLine)
+          for index, match in enumerate(matches):
+            frompos = match.regs[0][0]
+            topos = match.regs[0][1]
+            #print "{0}:{1}".format(frompos, topos)
+            if index == 0:
+              vlanIPHeaderSection.append([0, frompos + 1])
+            else:
+              vlanIPHeaderSection[index][1] = topos - 2
+            vlanIPHeaderSection.append([topos-1, -1])
+          if len(vlanIPHeaderSection) > 0 : vlanIPHeaderSection[-1][1] = len(vlanIPHeaderLine)      
       
       # get all interface data
       responseLines = Session.ExecCommand("show port all").splitlines()

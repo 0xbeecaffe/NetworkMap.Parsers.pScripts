@@ -1,7 +1,7 @@
 #########################################################################
 #                                                                       #
 #  This file is a Python parser module for PGT Network Map and is       #
-#  written to parse the configuration on Juniper MX/EX/QFS devices.     #
+#  written to parse the LLDP neighbors on Cisco IOS devices.            #
 #                                                                       #
 #  You may not use this file without a valid PGT Enterprise license.    #
 #  You may not duplicate or create derivative work from this script     #
@@ -20,9 +20,9 @@ import PGT.Common
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
 # last changed : 2019.11.23
-scriptVersion = "0.2"
-moduleName = "D-Link switch LLDP Parser"
-class DLinkSwitch_LLDP(L3Discovery.IGenericProtocolParser):
+scriptVersion = "0.1"
+moduleName = "Cisco IOS LLDP Parser"
+class CiscoIOS_LLDP(L3Discovery.IGenericProtocolParser):
   def __init__(self):
     # Describes current operation status
     self.OperationStatusLabel = ""
@@ -31,7 +31,7 @@ class DLinkSwitch_LLDP(L3Discovery.IGenericProtocolParser):
     #This is the protocol supported by this module
     self.ParsingForProtocols = [ L3Discovery.NeighborProtocol.LLDP ]
     #This is the vendor name supported by this module
-    self.ParsingForVendor = "D-Link"  
+    self.ParsingForVendor = "Cisco"  
   
   ### ---=== IGenericProtocolParser implementtion ===---- ###
   def GetOperationStatusLabel(self):
@@ -62,17 +62,17 @@ class DLinkSwitch_LLDP(L3Discovery.IGenericProtocolParser):
     #
     # regex search patters
     # Split command output to neighbor blocks. WARNING : splitting does not work with line engins \r\n, only if \r removed !
-    repNeighborDataBlocks = r"Port ID:.*(?:(?:(?!^Port ID:)[\s\S])*)"
-    # Split command output to entity blocks. WARNING : splitting does not work with line engins \r\n, only if \r removed !
-    repEntityDataBlocks = r"Entity\s\d+.*(?:(?:(?!^Entity\s\d+)[\s\S])*)"
-    repConnectingPort = r"^Port ID:(.*)"
-    repRemoteChassisID = r"Chassis ID\s+:(.*)"
-    repRemoteSystemName = r"System Name\s+:(.*)"
-    repNameOfStation = r"^\s+Name of Station\.+\s(.*)"
-    repRemotePortID = r"Port ID\s+:(.*)"
-    repManagementAddress = r"Management Address\.+\s([a-f\d:.]+)"
+    repNeighborDataBlocks = r"-+\n.*(?:(?:(?!^-+\n)[\s\S])*)"
+
+    repConnectingPort = r"^Local Intf:(.*)"
+    repRemoteChassisID = r"^Chassis id:(.*)"
+    repRemoteSystemName = r"^System Name:(.*)"
+    repNameOfStation = r"^System Description(.*)"   
+    repRemotePortID = r"^Port id:(.*)"
+    repManagementAddress = r"Management Addresses:\s+ip:(.[\d.]+)"
+    
     # Get data from switch
-    lldpNeighborData = Session.ExecCommand("show lldp neighbors interface eth1/0/1-1/0/28")
+    lldpNeighborData = Session.ExecCommand("show lldp neighbors detail")
     # Must replace \r\n to simply \n
     lldpNeighborData = re.sub(r"\r", "", lldpNeighborData)
     # Parse neighbor data
@@ -81,58 +81,55 @@ class DLinkSwitch_LLDP(L3Discovery.IGenericProtocolParser):
       try:
         thisRemoteData = match.group()
         localIntfName = self.GetRegexGroupMatches(repConnectingPort, thisRemoteData, 1)[0].strip()
-        entityDatablocks = re.finditer(repEntityDataBlocks, thisRemoteData, re.MULTILINE | re.IGNORECASE)
-        for index, match in enumerate(entityDatablocks):
-          thisEntityData = match.group()
-          ri = self.Router.GetInterfaceByName(localIntfName, instance)
-          if ri:
-            remoteChassisID = self.GetRegexGroupMatches(repRemoteChassisID, thisEntityData, 1)
-            if remoteChassisID and remoteChassisID[0] : 
-              remoteChassisID = remoteChassisID[0].strip()
-            else : 
-              remoteChassisID = "Unknown Chassis ID"          
-            remoteSystemName = self.GetRegexGroupMatches(repRemoteSystemName, thisEntityData, 1)
+        ri = self.Router.GetInterfaceByName(localIntfName, instance)
+        if ri:
+          remoteChassisID = self.GetRegexGroupMatches(repRemoteChassisID, thisRemoteData, 1)
+          if remoteChassisID and remoteChassisID[0] : 
+            remoteChassisID = remoteChassisID[0].strip()
+          else : 
+            remoteChassisID = "Unknown Chassis ID"          
+          remoteSystemName = self.GetRegexGroupMatches(repRemoteSystemName, thisRemoteData, 1)
+          if remoteSystemName and remoteSystemName[0] : 
+            remoteSystemName = remoteSystemName[0].strip()
+          else : 
+            remoteSystemName = self.GetRegexGroupMatches(repNameOfStation, thisRemoteData, 1)
             if remoteSystemName and remoteSystemName[0] : 
               remoteSystemName = remoteSystemName[0].strip()
-            else : 
-              remoteSystemName = self.GetRegexGroupMatches(repNameOfStation, thisEntityData, 1)
-              if remoteSystemName and remoteSystemName[0] : 
-                remoteSystemName = remoteSystemName[0].strip()
-              else:
-                remoteSystemName = "Unknown System Name"
-              
-            remotePortName = self.GetRegexGroupMatches(repRemotePortID, thisEntityData, 1)
-            remoteIntfName = ""
-            if remotePortName and remotePortName[0]:
-              remotePortName = remotePortName[0].strip()
-              if remotePortName.isdigit() : remotePortName = str(int(remotePortName))
-            remoteIntfName  = remotePortName
-            remoteNeighboringIP = self.GetRegexGroupMatches(repManagementAddress, thisEntityData, 1)
-            if remoteNeighboringIP and remoteNeighboringIP[0] : remoteNeighboringIP = remoteNeighboringIP[0].strip()
-            else : 
-              # try resolve from ARP if remote PortName is a MAC address and if that can be resolved from ARP cache
-              isremotePortNameMAC = re.findall(r"[a-f0-9]{2}-[a-f0-9]{2}-[a-f0-9]{2}-[a-f0-9]{2}-[a-f0-9]{2}-[a-f0-9]{2}", remotePortName, re.IGNORECASE) > 0
-              if isremotePortNameMAC:
-                arpEntry = Session.ExecCommand("show arp | i {0}".format(remotePortName))
+            else:
+              remoteSystemName = "Unknown System Name"
+            
+          remotePortName = self.GetRegexGroupMatches(repRemotePortID, thisRemoteData, 1)
+          remoteIntfName = ""
+          if remotePortName and remotePortName[0]:
+            remotePortName = remotePortName[0].strip()
+            if remotePortName.isdigit() : remotePortName = str(int(remotePortName))
+          remoteIntfName  = remotePortName
+          remoteNeighboringIP = self.GetRegexGroupMatches(repManagementAddress, thisRemoteData, 1)
+          if remoteNeighboringIP and remoteNeighboringIP[0] : remoteNeighboringIP = remoteNeighboringIP[0].strip()
+          else : 
+            # try resolve from ARP if remote PortName is a MAC address and if that can be resolved from ARP cache
+            isremotePortNameMAC = re.findall(r"[a-f0-9]{2}-[a-f0-9]{2}-[a-f0-9]{2}-[a-f0-9]{2}-[a-f0-9]{2}-[a-f0-9]{2}", remotePortName, re.IGNORECASE) > 0
+            if isremotePortNameMAC:
+              arpEntry = Session.ExecCommand("show arp | i {0}".format(remotePortName))
+              matchedIPs = re.findall(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", arpEntry, re.IGNORECASE)
+              if len(matchedIPs) > 0 : remoteNeighboringIP = matchedIPs[0].strip()
+              else : remoteNeighboringIP = ""
+            if not remoteNeighboringIP:
+              # try if remote chassi ID is MAC and if that can be resolved from ARP cache
+              isremoteChassisIsMAC = re.findall(r"[a-f0-9]{2}-[a-f0-9]{2}-[a-f0-9]{2}-[a-f0-9]{2}-[a-f0-9]{2}-[a-f0-9]{2}", remoteChassisID, re.IGNORECASE) > 0
+              if isremoteChassisIsMAC:
+                arpEntry = Session.ExecCommand("show arp | i {0}".format(remoteChassisID))
                 matchedIPs = re.findall(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", arpEntry, re.IGNORECASE)
-                if len(matchedIPs) > 0 : remoteNeighboringIP = matchedIPs[0].strip()
-                else : remoteNeighboringIP = ""
-              if not remoteNeighboringIP:
-                # try if remote chassi ID is MAC and if that can be resolved from ARP cache
-                isremoteChassisIsMAC = re.findall(r"[a-f0-9]{2}-[a-f0-9]{2}-[a-f0-9]{2}-[a-f0-9]{2}-[a-f0-9]{2}-[a-f0-9]{2}", remoteChassisID, re.IGNORECASE) > 0
-                if isremoteChassisIsMAC:
-                  arpEntry = Session.ExecCommand("show arp | i {0}".format(remoteChassisID))
-                  matchedIPs = re.findall(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", arpEntry, re.IGNORECASE)
-                  if len(matchedIPs) > 0 : remoteNeighboringIP = matchedIPs[0].strip() 
-                else:
-                  remoteNeighboringIP = ""             
-  
-            # Now we have all the data to register the neighbor
-            nRegistry.RegisterNeighbor(self.Router, instance, L3Discovery.NeighborProtocol.LLDP,  remoteChassisID, "", remoteSystemName, remoteNeighboringIP, ri, "OK", remoteIntfName) 
-          else:
-            DebugEx.WriteLine("DLinkSwitch_LLDP.Parse() : Router object failed to provide details for interface < {0} >".format(localIntfName), DebugLevel.Warning)
+                if len(matchedIPs) > 0 : remoteNeighboringIP = matchedIPs[0].strip() 
+              else:
+                remoteNeighboringIP = ""             
+
+          # Now we have all the data to register the neighbor
+          nRegistry.RegisterNeighbor(self.Router, instance, L3Discovery.NeighborProtocol.LLDP,  remoteChassisID, "", remoteSystemName, remoteNeighboringIP, ri, "OK", remoteIntfName) 
+        else:
+          DebugEx.WriteLine("CiscoIOS_LLDP.Parse() : Router object failed to provide details for interface < {0} >".format(localIntfName), DebugLevel.Warning)
       except Exception as Ex:
-        DebugEx.WriteLine("Error in DLinkSwitch_LLDP parser while processing block #{0}. Error is: {1}".format(index, str(Ex)))
+        DebugEx.WriteLine("Error in CiscoIOS_LLDP parser while processing block #{0}. Error is: {1}".format(index, str(Ex)))
         
   def Reset(self):
     """Instructs the router object to reset its internal state and cache if any"""
@@ -170,5 +167,5 @@ class DLinkSwitch_LLDP(L3Discovery.IGenericProtocolParser):
         
 ################### Script entry point ###################
 if ConnectionInfo.Command == "CreateInstance":
-  ActionResult = DLinkSwitch_LLDP()
+  ActionResult = CiscoIOS_LLDP()
   ScriptSuccess = True
