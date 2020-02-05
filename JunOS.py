@@ -7,7 +7,7 @@
 #  You may not duplicate or create derivative work from this script     #
 #  without a valid PGT Enterprise license                               #
 #                                                                       #
-#  Copyright Laszlo Frank (c) 2014-2019                                 #
+#  Copyright Laszlo Frank (c) 2014-2020                                 #
 #                                                                       #
 #########################################################################
 import re
@@ -19,8 +19,8 @@ import L3Discovery
 import PGT.Common
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
-# last changed : 2019.10.15
-scriptVersion = "6.0.1"
+# last changed : 2020.01.28
+scriptVersion = "6.0.2"
 class JunOS(L3Discovery.IRouter):
   # Beyond _maxRouteTableEntries only the default route will be queried
   _maxRouteTableEntries = 30000    
@@ -295,11 +295,7 @@ class JunOS(L3Discovery.IRouter):
     # Session global variable will always contain the actual session, therefore we don't need to
     # keep a referecnce to the session vsariable passed over here
     # ---
-    # NDE will force entering privileged mode for devices not in FavHost database, so we must switch back to normal exec mode
-    if session.InPrivilegedMode : 
-      currentLine = Session.GetCurrentTerminalLine().strip()
-      if currentLine.endswith("%") :
-        session.ExecCommand("exit")
+    if session.InPrivilegedMode : session.LeavePrivilegedMode()
     # ---
     if not self._versionInfo : self._versionInfo = Session.ExecCommand("show version")
     return "junos" in self._versionInfo.lower()
@@ -399,7 +395,6 @@ class JunOS(L3Discovery.IRouter):
       defInstance.Name = "master"
       instances.append(defInstance)   
       # collect vrf instances, construct CLI command
-      model = self.GetModelNumber().lower()
       for vrfTag in checkedVRFTags :
         cmd = "show route instance | match {0}".format(vrfTag)
         if logicalSystemName.lower() != "default":
