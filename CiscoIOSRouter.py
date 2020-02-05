@@ -7,7 +7,7 @@
 #  You may not duplicate or create derivative work from this script     #
 #  without a valid PGT Enterprise license                               #
 #                                                                       #
-#  Copyright Laszlo Frank (c) 2014-2019                                 #
+#  Copyright Laszlo Frank (c) 2014-2020                                 #
 #                                                                       #
 #########################################################################
 import clr
@@ -21,8 +21,8 @@ import re
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
 from L3Discovery import NeighborProtocol
-# last changed : 2019.11.23
-scriptVersion = "5.4.0"
+# last changed : 2020.01.28
+scriptVersion = "6.0.0"
 class CiscoIOSRouter(L3Discovery.IRouter):
   # Beyond _maxRouteTableEntries only the default route will be queried
   _maxRouteTableEntries = 30000    
@@ -283,7 +283,13 @@ class CiscoIOSRouter(L3Discovery.IRouter):
     # keep a referecnce to the session vsariable passed over here
     self._defaultRoutingInstanceName = L3Discovery.RoutingInstance.DefaultInstanceName(self.GetVendor())
     v = self.GetVersion()
-    return "cisco ios" in v.lower()
+    result = "cisco ios" in v.lower()
+    if result and not session.InPrivilegedMode: 
+      session.EnterPrivilegedMode()
+      if not session.InPrivilegedMode :
+        result = False
+        DebugEx.WriteLine("Cisco IOS Router Module Error : could not switch session to privileged exec mode")      
+    return result
     
   def RegisterNHRP(self, neighborRegistry, instance):
     """Performs NHRP database registration"""
@@ -346,7 +352,7 @@ class CiscoIOSRouter(L3Discovery.IRouter):
             if len(match) == 1 : PeerAddress = match[0]
             continue
       except Exception as Ex:
-        message = "JunOS Router Module Error : could not parse NHRP information <{0}> because : {1} ".format(thisLine, str(Ex))
+        message = "Cisco IOS Router Module Error : could not parse FHRP information <{0}> because : {1} ".format(thisLine, str(Ex))
         DebugEx.WriteLine(message)
         
     # -- register the last one
