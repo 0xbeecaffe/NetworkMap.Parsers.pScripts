@@ -599,8 +599,13 @@ class RouterIDCalculator():
       
       # get the running routing protocols for this routing instance
       runnintRoutingProtocols = self.Router.ActiveProtocols(instance)
-      for thisProtocol in runnintRoutingProtocols:   
-        self.RouterID[instanceName][str(thisProtocol)] = globalRouterID   
+      for thisProtocol in runnintRoutingProtocols:
+        if thisProtocol == L3Discovery.NeighborProtocol.LLDP:
+          # only for default (global) routing instance
+          if instanceName == self.Router._defaultRoutingInstanceName :
+            self.RouterID[instanceName][str(thisProtocol)] = self.Router.GetHostName()   
+        else:
+          self.RouterID[instanceName][str(thisProtocol)] = globalRouterID   
        
   def Reset(self):
     self.RouterID = {}
