@@ -1,29 +1,29 @@
-#########################################################################
-#                                                                       #
-#  This file is a Python parser module for PGT Network Map and is       #
-#  written to parse the configuration on HIRSCHMANN MACH switches.      #
-#                                                                       #
-#  You may not use this file without a valid PGT Enterprise license.    #
-#  You may not duplicate or create derivative work from this script     #
-#  without a valid PGT Enterprise license                               #
-#                                                                       #
-#  Copyright Laszlo Frank (c) 2014-2019                                 #
-#                                                                       #
-#########################################################################
+##########################################################################
+#                                                                        #
+#  This file is a Python parser module for Script N'Go Network Map and   #
+#  is written to parse the configuration on specific Hirschmann switches.#
+#                                                                        #
+#  You may not use this file without a valid Script N'Go license.        #
+#  You may not duplicate or create derivative work from this script      #
+#  without a valid Script N'Go license.                                  #
+#                                                                        #
+#  Copyright Eszközbeszerzés Kft. (c) 2020                               #
+#                                                                        #
+##########################################################################
+
 import clr
-clr.AddReferenceToFileAndPath("PGTInterfaces.dll")
-clr.AddReferenceToFileAndPath("PGTNetworkMap.dll")
+clr.AddReferenceToFileAndPath("SNGInterfaces.dll")
+clr.AddReferenceToFileAndPath("NetworkMap.dll")
 clr.AddReferenceToFileAndPath("Common.dll")
-import System
 import L3Discovery
-import PGT.Common
+import Scriptngo.Common
 import re
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
 from L3Discovery import NeighborProtocol
-from PGT.Common import IPOperations
-# last changed : 2019.12.18
-scriptVersion = "2.1"
+from Scriptngo.Common import IPOperations
+# last changed : 2020.04.14
+scriptVersion = "9.0.0"
 class HirshmannSwitchType:
   Unknown = 0
   MachSwitch = 1
@@ -51,7 +51,7 @@ class HirshmannSwitch(L3Discovery.IRouter):
     # The routing protocols run by this router, dictionary keyed by routing instamce name
     self._runningRoutingProtocols = {} 
     # The current PGT settings   
-    self.ScriptSettings = PGT.Common.SettingsManager.GetCurrentScriptSettings()
+    self.ScriptSettings = Scriptngo.Common.SettingsManager.GetCurrentScriptSettings()
     # The ModelNumber calculated from Inventory
     self._ModelNumber = None
     # The SystemSerial calculated from Inventory
@@ -310,7 +310,7 @@ class HirshmannSwitch(L3Discovery.IRouter):
     self._logicalSystems = []
     self._routingInstances = {}
     self._runningRoutingProtocols = {} 
-    self.ScriptSettings = PGT.Common.SettingsManager.GetCurrentScriptSettings()
+    self.ScriptSettings = Scriptngo.Common.SettingsManager.GetCurrentScriptSettings()
     self._ModelNumber = None
     self._SystemSerial = None 
     self._operationStatusLabel = "Idle"
@@ -357,7 +357,6 @@ class HirshmannSwitch(L3Discovery.IRouter):
     # Not implemented
     return parsedRoutes
       
-
 class RouterIDCalculator():
   """Performs Router ID and AS Number calculations """
   def __init__(self, router):
@@ -456,7 +455,7 @@ class InterfaceParser():
     
   def ParseInterfaces(self, instance) :
     """Collects interface details for all interfaces of specified routing instance, but do not collect interface configuration """
-    from  PGT.Common import IPOperations
+    from  Scriptngo.Common import IPOperations
     try:
       # First parse the VLAN database if missing
       if len(self._vlanIDs) == 0 : self.ParseVLANDatabase()

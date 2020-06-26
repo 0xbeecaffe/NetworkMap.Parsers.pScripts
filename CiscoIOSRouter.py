@@ -1,28 +1,27 @@
 #########################################################################
 #                                                                       #
-#  This file is a Python parser module for PGT Network Map and is       #
-#  written to parse the configuration on Juniper MX/EX/QFS devices.     #
+#  This file is a Python parser module for Script N'Go Network Map and  #
+#  is written to parse the configuration on Cisco IOS routers.          #
 #                                                                       #
-#  You may not use this file without a valid PGT Enterprise license.    #
+#  You may not use this file without a valid Script N'Go license.       #
 #  You may not duplicate or create derivative work from this script     #
-#  without a valid PGT Enterprise license                               #
+#  without a valid Script N'Go license.                                 #
 #                                                                       #
-#  Copyright Laszlo Frank (c) 2014-2020                                 #
+#  Copyright Eszközbeszerzés Kft. (c) 2020                              #
 #                                                                       #
 #########################################################################
 import clr
-clr.AddReferenceToFileAndPath("PGTInterfaces.dll")
-clr.AddReferenceToFileAndPath("PGTNetworkMap.dll")
+clr.AddReferenceToFileAndPath("SNGInterfaces.dll")
+clr.AddReferenceToFileAndPath("NetworkMap.dll")
 clr.AddReferenceToFileAndPath("Common.dll")
-import System
 import L3Discovery
-import PGT.Common
+import Scriptngo.Common
 import re
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
 from L3Discovery import NeighborProtocol
-# last changed : 2020.01.28
-scriptVersion = "6.0.0"
+# last changed : 2020.04.14
+scriptVersion = "9.0.0"
 class CiscoIOSRouter(L3Discovery.IRouter):
   # Beyond _maxRouteTableEntries only the default route will be queried
   _maxRouteTableEntries = 30000    
@@ -43,7 +42,7 @@ class CiscoIOSRouter(L3Discovery.IRouter):
     # The routing protocols run by this router, dictionary keyed by routing instamce name
     self._runningRoutingProtocols = {} 
     # The current PGT settings   
-    self.ScriptSettings = PGT.Common.SettingsManager.GetCurrentScriptSettings()
+    self.ScriptSettings = Scriptngo.Common.SettingsManager.GetCurrentScriptSettings()
     # The ModelNumber calculated from Inventory
     self._ModelNumber = None
     # The SystemSerial calculated from Inventory
@@ -368,7 +367,7 @@ class CiscoIOSRouter(L3Discovery.IRouter):
     self._logicalSystems = []
     self._routingInstances = {}
     self._runningRoutingProtocols = {} 
-    self.ScriptSettings = PGT.Common.SettingsManager.GetCurrentScriptSettings()
+    self.ScriptSettings = Scriptngo.Common.SettingsManager.GetCurrentScriptSettings()
     self._ModelNumber = None
     self._SystemSerial = None 
     self._operationStatusLabel = "Idle"

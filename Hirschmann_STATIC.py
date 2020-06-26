@@ -1,27 +1,28 @@
 #########################################################################
 #                                                                       #
-#  This file is a Python parser module for PGT Network Map and is       #
-#  written to parse the configuration on Juniper MX/EX/QFS devices.     #
+#  This file is a Python parser module for Script N'Go Network Map and  #
+#  is written to parse static routing on some Hirschmann switches.      #
 #                                                                       #
-#  You may not use this file without a valid PGT Enterprise license.    #
+#  You may not use this file without a valid Script N'Go license.       #
 #  You may not duplicate or create derivative work from this script     #
-#  without a valid PGT Enterprise license                               #
+#  without a valid Script N'Go license.                                 #
 #                                                                       #
-#  Copyright Laszlo Frank (c) 2014-2019                                 #
+#  Copyright Eszközbeszerzés Kft. (c) 2020                              #
 #                                                                       #
 #########################################################################
+
 import re
 import clr
-clr.AddReferenceToFileAndPath("PGTInterfaces.dll")
-clr.AddReferenceToFileAndPath("PGTNetworkMap.dll")
+clr.AddReferenceToFileAndPath("SNGInterfaces.dll")
+clr.AddReferenceToFileAndPath("NetworkMap.dll")
 clr.AddReferenceToFileAndPath("Common.dll")
 import L3Discovery
-import PGT.Common
+import Scriptngo.Common
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
-from PGT.Common import IPOperations
-# last changed : 2019.08.02
-scriptVersion = "0.1"
+from Scriptngo.Common import IPOperations
+# last changed : 2020.04.14
+scriptVersion = "9.0.0"
 moduleName = "Hirschmann switch static route parser"
 class Hirschmann_STATIC(L3Discovery.IGenericProtocolParser):
   def __init__(self):

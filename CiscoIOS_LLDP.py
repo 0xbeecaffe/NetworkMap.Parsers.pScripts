@@ -1,26 +1,26 @@
 #########################################################################
 #                                                                       #
-#  This file is a Python parser module for PGT Network Map and is       #
-#  written to parse the LLDP neighbors on Cisco IOS devices.            #
+#  This file is a Python parser module for Script N'Go Network Map and  #
+#  is written to parse the configuration on Cisco IOS routers.          #
 #                                                                       #
-#  You may not use this file without a valid PGT Enterprise license.    #
+#  You may not use this file without a valid Script N'Go license.       #
 #  You may not duplicate or create derivative work from this script     #
-#  without a valid PGT Enterprise license                               #
+#  without a valid Script N'Go license.                                 #
 #                                                                       #
-#  Copyright Laszlo Frank (c) 2014-2019                                 #
+#  Copyright Eszközbeszerzés Kft. (c) 2020                              #
 #                                                                       #
 #########################################################################
 import re
 import clr
-clr.AddReferenceToFileAndPath("PGTInterfaces.dll")
-clr.AddReferenceToFileAndPath("PGTNetworkMap.dll")
+clr.AddReferenceToFileAndPath("SNGInterfaces.dll")
+clr.AddReferenceToFileAndPath("NetworkMap.dll")
 clr.AddReferenceToFileAndPath("Common.dll")
 import L3Discovery
-import PGT.Common
+import Scriptngo.Common
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
-# last changed : 2019.11.23
-scriptVersion = "0.1"
+# last changed : 2020.04.15
+scriptVersion = "9.0.0"
 moduleName = "Cisco IOS LLDP Parser"
 class CiscoIOS_LLDP(L3Discovery.IGenericProtocolParser):
   def __init__(self):
@@ -63,7 +63,6 @@ class CiscoIOS_LLDP(L3Discovery.IGenericProtocolParser):
     # regex search patters
     # Split command output to neighbor blocks. WARNING : splitting does not work with line engins \r\n, only if \r removed !
     repNeighborDataBlocks = r"-+\n.*(?:(?:(?!^-+\n)[\s\S])*)"
-
     repConnectingPort = r"^Local Intf:(.*)"
     repRemoteChassisID = r"^Chassis id:(.*)"
     repRemoteSystemName = r"^System Name:(.*)"
@@ -123,13 +122,12 @@ class CiscoIOS_LLDP(L3Discovery.IGenericProtocolParser):
                 if len(matchedIPs) > 0 : remoteNeighboringIP = matchedIPs[0].strip() 
               else:
                 remoteNeighboringIP = ""             
-
           # Now we have all the data to register the neighbor
           nRegistry.RegisterNeighbor(self.Router, instance, L3Discovery.NeighborProtocol.LLDP,  remoteChassisID, "", remoteSystemName, remoteNeighboringIP, ri, "OK", remoteIntfName) 
         else:
           DebugEx.WriteLine("CiscoIOS_LLDP.Parse() : Router object failed to provide details for interface < {0} >".format(localIntfName), DebugLevel.Warning)
       except Exception as Ex:
-        DebugEx.WriteLine("Error in CiscoIOS_LLDP parser while processing block #{0}. Error is: {1}".format(index, str(Ex)))
+        DebugEx.WriteLine("CiscoIOS_LLDP.Parse() : Error while processing block #{0}. Error is: {1}".format(index, str(Ex)))
         
   def Reset(self):
     """Instructs the router object to reset its internal state and cache if any"""

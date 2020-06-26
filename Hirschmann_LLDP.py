@@ -1,26 +1,26 @@
 #########################################################################
 #                                                                       #
-#  This file is a Python parser module for PGT Network Map and is       #
-#  written to parse the configuration on Juniper MX/EX/QFS devices.     #
+#  This file is a Python parser module for Script N'Go Network Map and  #
+#  is written to parse LLDP protocol on certain Hirschmann switches.    #
 #                                                                       #
-#  You may not use this file without a valid PGT Enterprise license.    #
+#  You may not use this file without a valid Script N'Go license.       #
 #  You may not duplicate or create derivative work from this script     #
-#  without a valid PGT Enterprise license                               #
+#  without a valid Script N'Go license.                                 #
 #                                                                       #
-#  Copyright Laszlo Frank (c) 2014-2019                                 #
+#  Copyright Eszközbeszerzés Kft. (c) 2020                              #
 #                                                                       #
 #########################################################################
 import re
 import clr
-clr.AddReferenceToFileAndPath("PGTInterfaces.dll")
-clr.AddReferenceToFileAndPath("PGTNetworkMap.dll")
+clr.AddReferenceToFileAndPath("SNGInterfaces.dll")
+clr.AddReferenceToFileAndPath("NetworkMap.dll")
 clr.AddReferenceToFileAndPath("Common.dll")
 import L3Discovery
-import PGT.Common
+import Scriptngo.Common
 from System.Diagnostics import DebugEx, DebugLevel
 from System.Net import IPAddress
-# last changed : 2019.11.04
-scriptVersion = "0.2"
+# last changed : 2020.04.14
+scriptVersion = "9.0.0"
 moduleName = "Hirschmann switch LLDP Parser"
 class HirschmannSwitch_LLDP(L3Discovery.IGenericProtocolParser):
   def __init__(self):
